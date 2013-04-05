@@ -17,6 +17,7 @@ default_config = 'tempest_defaults.cfg'
 default_html = "<html>Default %s index.html</html>" %__file__
 logfile = os.path.join(default_base,'logs','tempest.log')
 objectlog = os.path.join(default_base,'logs','object.log')
+prefab.lst = os.path.join(default_base,'prefabs','prefab.lst')
 default_sections = ["tempest","server","dns","files","db","lb"]
 
 tempest_objects=['config','auth','prefab']
@@ -150,12 +151,17 @@ class Prefab:
         filestr = str(self.file)
 
         self.tmpfile = filestr.replace("cfg","tmp")
+        
+        self.bakfile = filestr.replace("cfg","bak")
 
         self.path = os.path.join(self.base,self.file)
 
         self.tmppath = os.path.join(self.base,self.tmpfile)
 
+        self.bakpath = os.path.join(self.base,self.bakfile)
+
         self.prefabpath = os.path.join(self.base,'prefabs')
+
 
         self.uploadpath = os.path.join(self.base,'uploads')
 
@@ -175,12 +181,22 @@ class Prefab:
 
     def save(self):
 
-        with open( self.path , 'wb') as prefabfile:
+
+        with open( self.tmppath , 'wb') as prefabfile:
 
             self.prefab.write(prefabfile)
 
-        return
+        if os.path.exists(self.path):
 
+            print self.path, self.tmppath, self.bakpath
+
+            os.rename( self.path , self.bakpath )
+
+        else:
+
+            os.rename( self.tmppath , self.path )
+
+        return
 
     def get(self,section,item):
 
@@ -239,7 +255,6 @@ class Prefab:
             self.prefab.set(section, 'identpath', self.base)
 
             self.prefab.set(section, 'ident', '.tempest.id')
-
 
             return
 
@@ -603,7 +618,7 @@ def valid_file ( file ):
 
   if not os.path.exists(os.path.expanduser(file)):
 
-     raise argparse.ArgumentError("The file %s does not exist!"%os.path.expanduser(file))
+     raise "The file %s does not exist!"%os.path.expanduser(file)
 
   else:
 
