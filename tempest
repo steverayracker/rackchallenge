@@ -4,20 +4,22 @@ import pyrax
 import argparse
 import logging as log
 import ConfigParser
+import configobj
+from configobj import ConfigObj
 import os,sys
 import signal
 import errno
 import warnings
 import keyring
 
+global logfile
 # Defaults
 default_base = os.path.expanduser("~/.tempest")
 default_pyrax = os.path.expanduser("~/.pyrax.cfg")
 default_config = 'tempest_defaults.cfg'
 default_html = "<html>Default %s index.html</html>" %__file__
 logfile = os.path.join(default_base,'logs','tempest.log')
-objectlog = os.path.join(default_base,'logs','object.log')
-prefab.lst = os.path.join(default_base,'prefabs','prefab.lst')
+prefab_lilst = os.path.join(default_base,'prefabs','prefab.lst')
 default_sections = ["tempest","server","dns","files","db","lb"]
 
 tempest_objects=['config','auth','prefab']
@@ -36,13 +38,9 @@ all_objects = tempest_objects + cloud_objects
 all_actions = common_actions + prefab_actions + server_actions  + db_actions 
 
 warnings.filterwarnings(
-
     'ignore',
-
     message='BaseException.message has been deprecated as of Python 2.6',
-
     category=DeprecationWarning,
-
     module='argparse')
 
 #Error Handling
@@ -62,45 +60,27 @@ class TempestError(Exception):
 
      pass
 
-     
+# config - Prospero - the magister gives the commands
+class Prospero:
 
-# config - Prefabs
-class Prefab:
-
-    def __init__(self, sections=False , base=False, file=False, option=None):
+    def __init__(self, sections=False , base=default_base, file=False, option=None):
 
         self.sections = sections
-
         self.option = option
-
         self.defaults = option
-
-        if base:
-
-            self.base = base
-
-        else:
-
-            self.base = default_base
-
+        self.base = base
         self.file = file
-
         self.setpaths()
 
-        prefab = ConfigParser.RawConfigParser()
-
+        prefab = ConfigObj(list_values=True,interpolation=True)
         self.prefab = prefab
 
         if self.option and self.option == 'defaults':
-
             self.defaults=True
-
             self.custom=False
 
         elif self.option and self.options == 'custom':
-
             self.defaults=False
-
             self.custom=True
 
         self.define_sections()
@@ -109,114 +89,94 @@ class Prefab:
     def define_sections(self):
 
         if self.sections:
-
-
             for section in self.sections:
+                self.prefab[str(section)]={}
+                self._build(section)
 
-                self.prefab.add_section(section)
+    def _build(self,section):
 
-        #if self.defaults:
+        if section == 'tempest':
+            self._app(section)
 
-            #for section in self.sections:
+        if section == 'server':
+            self._server(section)
 
-                if section == 'tempest':
+        if section == 'dns':
+            self._dns(section)
 
-                    self._app(section)
+        if section == 'files':
+            self._files(section)
 
-                if section == 'server':
+        if section == 'db':
+            self._db(section)
 
-                    self._server(section)
-
-                if section == 'dns':
-
-                    self._dns(section)
-
-                if section == 'file':
-
-                    self._files(section)
-
-                if section == 'db':
-
-                    self._db(section)
-
-                if section == 'lb':
-
-                    self._lb(section)
+        if section == 'lb':
+            self._lb(section)
 
 
     def setpaths(self):
 
         self.home = os.path.expanduser('~/')
-
         filestr = str(self.file)
-
         self.tmpfile = filestr.replace("cfg","tmp")
-        
         self.bakfile = filestr.replace("cfg","bak")
-
-        self.path = os.path.join(self.base,self.file)
-
-        self.tmppath = os.path.join(self.base,self.tmpfile)
-
-        self.bakpath = os.path.join(self.base,self.bakfile)
-
+        self.filepath = os.path.join(self.base,self.file)
+        self.tmppath = os.path.join(self.base,'tmp')
+        self.bakpath = os.path.join(self.base,'backups')
         self.prefabpath = os.path.join(self.base,'prefabs')
-
-
         self.uploadpath = os.path.join(self.base,'uploads')
-
         self.logpath = os.path.join(self.base,'logs')
 
 
     def load(self):
-
-        prefab = ConfigParser.RawConfigParser()
-
-        prefab.read(self.path)
-
+        prefab = ConfigObj(self.filepath)
         self.prefab = prefab
-
         return
-
 
     def save(self):
 
+        tmpfile  = os.path.join(self.tmppath,self.tmpfile)
+        backup = os.path.join(self.bakpath,self.bakfile)
 
-        with open( self.tmppath , 'wb') as prefabfile:
+        self.prefab.filename = tmpfile
+        self.prefab.write()
 
-            self.prefab.write(prefabfile)
-
-        if os.path.exists(self.path):
-
-            print self.path, self.tmppath, self.bakpath
-
-            os.rename( self.path , self.bakpath )
-
-        else:
-
-            os.rename( self.tmppath , self.path )
+        if os.path.exists(self.filepath):
+            os.rename( self.filepath , backup )
+         
+        os.rename( tmpfile , self.filepath )
 
         return
 
-    def get(self,section,item):
+    def get(self,section,item=False):
 
-        value = self.prefab.get(section,item)
+        if not item:
+           value = self.prefab[section][item]
+        else:
+           value = self.prefab[section][item]
 
         return value
 
 
+    def argwalk(self,arguments):
+        for section in self.prefab:
+            for item in self.prefab[section]:
+                if not item == "description": 
+                    value = self.prefab[section][item]
+                    d = {item: value}
+                    arguments.set_defaults( **d )
+                    arguments.parse_args()            
+        return arguments
+
     def show(self):
 
-        for section in self.prefab.sections():
-
-           print "[%s]" %section
-
-           for item in self.prefab.items(section):
-
-               print item 
-
+        for section in self.prefab:
+            print
+            print "[%s]" %section
+            for item in self.prefab[section]:
+                value = self.prefab[section][item]
+                print item, " = " , value
         print
-
         return
 
 
@@ -225,141 +185,97 @@ class Prefab:
         if self.defaults:
 
             make_dir(self.base)
-
             make_dir(self.prefabpath)
-
             make_dir(self.logpath)
-
             make_dir(self.uploadpath)
+            make_dir(self.tmppath)
+            make_dir(self.bakpath)
 
-            self.prefab.set(section, 'description','Application Defaults')
-
-            self.prefab.set(section, 'configpath', self.base)
-            
-            self.prefab.set(section, 'config', self.file)
-
-            self.prefab.set(section, 'uploadpath', self.prefabpath)
-
-            self.prefab.set(section, 'upload', 'index.htm')
-
-            self.prefab.set(section, 'prefabpath', self.prefabpath)
-
-            self.prefab.set(section, 'logpath', self.logpath)
-
-            self.prefab.set(section, 'logfile', 'tempest.log')
-
-            self.prefab.set(section, 'pyraxpath', self.home)
-
-            self.prefab.set(section, 'pyrax', '.pyrax.cfg')
-
-            self.prefab.set(section, 'identpath', self.base)
-
-            self.prefab.set(section, 'ident', '.tempest.id')
+            self.prefab[str(section)]['description'] = 'Application Defaults'
+            self.prefab[str(section)]['configpath'] = self.base
+            self.prefab[str(section)]['config'] = self.file
+            self.prefab[str(section)]['uploadpath'] = self.prefabpath
+            self.prefab[str(section)]['default_upload'] = 'index.htm'
+            self.prefab[str(section)]['prefabpath'] = self.prefabpath
+            self.prefab[str(section)]['logpath'] =self.logpath
+            self.prefab[str(section)]['logfile'] ='tempest.log'
+            self.prefab[str(section)]['pyraxpath'] =self.home
+            self.prefab[str(section)]['default_pyrax'] ='.pyrax.cfg'
+            self.prefab[str(section)]['identpath'] =self.base
+            self.prefab[str(section)]['default_ident'] ='.tempest.id'
 
             return
 
     def _server(self,section):
 
         if self.defaults:
-
-            self.prefab.set(section, 'description','Cloud Server Defaults')
-
-            self.prefab.set(section, 'image','8a3a9f96-b997-46fd-b7a8-a9e740796ffd')
-
-            self.prefab.set(section, 'flavor',2)
+            self.prefab[str(section)]['description'] = 'Cloud Server Defaults'
+            self.prefab[str(section)]['image'] = '8a3a9f96-b997-46fd-b7a8-a9e740796ffd'
+            self.prefab[str(section)]['flavor'] = 2
 
             return
 
     def _dns(self,section):
 
         if self.defaults:
-
-            self.prefab.set(section, 'description','Cloud DNS Defaults')
-
-            self.prefab.set(section, 'zone','example.com')
-
-            self.prefab.set(section, 'record','A')
+            self.prefab[str(section)]['description'] = 'Cloud DNS Defaults'
+            self.prefab[str(section)]['zone'] = 'example.com'
+            self.prefab[str(section)]['record'] = 'A'
 
             return
 
     def _files(self,section):
 
         if self.defaults:
-
-            self.prefab.set(section, 'description','Cloud Files Defaults')
-
-            self.prefab.set(section, 'container','cloudfiles1')
-
-            self.prefab.set(section, 'cdn','False')
-
-            self.prefab.set(section, 'uploadpath',os.path.join(self.base,"uploads"))
-
-            self.prefab.set(section, 'upload','index.htm')
-
-            self.prefab.set(section, 'html',default_html)
-
-            file = open(os.path.join(self.uploadpath,"index.htm"), 'wb')
-
-            file.write(default_html)
+            html = open(os.path.join(self.uploadpath,"index.htm") , 'wb')
+            html .write(default_html)
+            self.prefab[str(section)]['description'] = 'Cloud Files Defaults'
+            self.prefab[str(section)]['container'] = 'cloudfiles1'
+            self.prefab[str(section)]['cdn'] = 'False'
+            self.prefab[str(section)]['uploadpath'] = self.uploadpath
+            self.prefab[str(section)]['upload'] = 'index.htm'
+            self.prefab[str(section)]['html'] = default_html
 
             return
 
     def _db(self,section):
 
         if self.defaults:
-
-            self.prefab.set(section, 'description','Cloud Databases Defaults')
-
-            self.prefab.set(section, 'dbtype','MySQL')
+            self.prefab[str(section)]['description'] = 'Cloud Databases Defaults'
+            self.prefab[str(section)]['dbtype'] = 'MySQL'
 
             return
 
     def _lb(self,section):
 
         if self.defaults:
-
-            self.prefab.set(section, 'description','Cloud LoadBalancer Defaults')
-
-            self.prefab.set(section, 'port', 80)
-
-            self.prefab.set(section, 'algorithm','least connections')
+            self.prefab[str(section)]['description'] = 'Cloud LoadBalancer Defaults'
+            self.prefab[str(section)]['port'] =80
+            self.prefab[str(section)]['algorithm'] = 'least connections'
 
             return
-
         
 
 # Class for application fuctions
-
 class Tempest:
 
    def __init__(self,username=False,apikey=False,ident=False,pyrax=False,keyring=False):
 
        self.username = username
-
        self.apikey = apikey
-
        self.ident  = ident
-
        self.username = username
-
        self.pyrax = pyrax
-
        self.keyring = keyring
-
        self.auth()
-
        return
 
    def genkeyring ( self, keyname):
 
        print "Creating keyring: %s" %keyname
-
        print "User Name: %s" %self.username
-
        print "API Key: %s" %self.apikey
-
        try: keyring.set_password( str(keyname), str(self.username), str(self.apikey) )
-
        except NameError: pass
 
        return
@@ -367,57 +283,39 @@ class Tempest:
    def create(self,obj_type,*args):             
 
        if obj_type == "server" or "servers" and args and len(args) == 3:
-
           self._srv_create(*args)
 
    def _srv_create(self,name,flavor,image):
 
            server = self.cslist.servers.create(name,flavor,image)
-
            if server:
-
-               obj_logger.info( "ID: %s" %str(server.id) )
-
-               obj_logger.info( "Status: %s" %server.status )
-
-               obj_logger.info( "Admin password: %s" %server.adminPass )
-
-               obj_logger.info( "Networks: %s" %server.networks )
+               console.info( "ID: %s" %str(server.id) )
+               console.info( "Status: %s" %server.status )
+               console.info( "Admin password: %s" %server.adminPass )
+               console.info( "Networks: %s" %server.networks )
 
    def delete(self,obj_type,id):             
 
        try:
-
           if obj_type == "server" or "servers" and args and len(args) == 1:
-
               self._srv_delete(id)
 
        except Exception:
-
            logger.exception("Unable to delete object with uuid or name: %s" %id)
-
            console.error("Unable to delete object with uuid or name: %s" %id)
-
            pass
 
            return
 
    def _srv_delete(self,id):
 
-       server = self.valid(obj_type,id)
-
+       server = self.valid("server",id)
+       print server
        try:
-
             server.delete() 
-
             console.info ( "ACTION: deleted server with UUID or name: %s" %id )
-
        except Exception:
-
-            logger.error("unable to delete UUID: %s" %id)
-
             console.error("unable to delete UUID: %s" %id)
-
             pass 
 
             return
@@ -425,50 +323,34 @@ class Tempest:
    def valid(self,obj_type,id):
 
        try:
-
-           if obj_type == "server" or "servers" and args and len(args) == 1:
-
-              _srv_valid(id) 
-
+           if obj_type == "server":
+               return self._srv_valid(id) 
        except Exception:
-
            logger.exception("Unable to find object with uuid or name: %s" %id)
-
            console.error("Unable to find object with uuid or name: %s" %id)
-
-
-   def _srv_valid(self,id):
-
-       try:
-
-           server = self.cslist.servers.get(id)
-
-           return server
-
-       except novaclient.exceptions.NotFound:
-
-           logger.exception("UUID %s invalid or not found" %id)
-
-           console.error("UUID %s invalid or not found" %id)
-
            pass
 
+   def _srv_valid(self,id):
+       try:
+           server = self.cslist.servers.get(id)
+           return server
+       except Exception:
+           pass
+
+       except novaclient.exceptions.NotFound:
+           logger.exception("UUID %s invalid or not found" %id)
+           console.error("UUID %s invalid or not found" %id)
+           pass
            return
 
    def show(self,obj_type,id):
 
        if obj_type == "server" or "servers" and args and len(args) == 1:
-
           try:
-
               self._srv_show(id)
-
           except Exception:
-
               logger.exception("Unable to find object with uuid or name: %s" %id)
-
               console.error("Unable to find object with uuid or name: %s" %id)
-
               pass
 
    def _srv_show(self,id):
@@ -476,21 +358,14 @@ class Tempest:
        server = self.cslist.servers.get(id)
 
        try:
-
            print
-
            print "Server Name:", server.name
-
            print "Server ID:", server.id
-
            print "Server Status:", server.status
-
            print
 
        except Exception:
-
            logger.exception("Cloud Server object invalid or not found")
-
            console.error("Cloud Server object invalid or not found") 
 
            pass
@@ -500,21 +375,13 @@ class Tempest:
    def list(self,obj_type=False):
 
        if obj_type  == "server" or "servers":
-
            servers = self.cslist.servers.list()
-
            for server in servers:
-
                try:
-
                    if server.status == "ACTIVE" or 'BUILD':
-
                        active = server
-
                except IndexError:
-
                    logger.critical ("there are no active servers in your account.")
-
                    console.critical ("there are no active servers in your account.")
 
                    return
@@ -522,148 +389,101 @@ class Tempest:
                # Display server info
 
                if active.name:
-
                   self.show(obj_type,active)
 
    def auth(self):
 
        if pyrax.identity.authenticated:
-
            self.cslist  = pyrax.cloudservers
-
            return
-
        else:
-
            if self.username and self.apikey:
-
                try: pyrax.set_credentials(self.username, self.apikey)
-
                except: 
-
                    logger.warn("invalid user name or apikey, check the values and try again.")
 
            if not pyrax.identity.authenticated and self.ident:
-
                try:
-
                    with open(self.ident): pass
-
                    try: pyrax.set_credential_file(self.ident)
-
                    except NameError: pass 
-
                except IOError: pass 
 
            if not pyrax.identity.authenticated and self.pyrax and self.keyring:
-
                try:
-
                    with open(self.pyrax): pass
-
                except IOError: pass
-
                try: pyrax.keyring_auth() 
-
                except: pass 
 
            if not pyrax.identity.authenticated:
-
                console.info("keyring and ident file authentication failed, trying manual authentication.")
-
                question = "What is your Rackspace Cloud Account User Name?[x to exit]"
-
                answer = getanswer(question)
-
                username = str (answer)
-
                pyrax.keyring_auth(username)
 
                if not pyrax.identity.authenticated:
-
                    question = "What is your Rackspace Cloud Account API key?[x to exit]"
-
                    answer = getanswer(question)
-
                    apikey = str (answer)
-
                    try: pyrax.set_credentials(username,apikey)
 
                    except: 
-
                       logger.critical (" manual login failed, no valid authentication method found.")
-
                       exit()
 
            if pyrax.identity.authenticated and pyrax.cloudservers:
-
+               console.info("authentication sucessful")
                self.cslist  = pyrax.cloudservers
 
                return
 
 def make_dir ( dir ):
-
    if not os.path.exists(os.path.expanduser(dir)):
-
        try: os.makedirs(dir)
-
        except OSError as exception:
-
            if exception.errno != errno.EEXIST:
-
                raise
 
 
 def valid_file ( file ):
 
   if not os.path.exists(os.path.expanduser(file)):
-
      raise "The file %s does not exist!"%os.path.expanduser(file)
-
   else:
-
      return os.path.expanduser(file)
 
 
 def getanswer(question):
 
     print question
-
     response = raw_input()
-
     answer = str (response)
-
     if answer == "x":
-
        exit()
 
     else:
-
        return answer
 
-# Arguments
+# Arguments - the slave who does all the work
 class Caliban:
 
-     def __init__(self,mode=False):
+     def __init__(self,mode=False,prefab=False):
 
-         self.parser = argparse.ArgumentParser(prog="prospero",description='Rackspace open cloud services command and control script using the pyrax Python API bindings', epilog="Pressing ctl+C at any time will exit the script. In interactive mode, x will exit the script.") #, add_help=True, formatter_class=argparse.ArgumentDefaultsHelpFormatter) 
+         self.parser = argparse.ArgumentParser(prog=__file__,description='Rackspace open cloud services command and control script using the pyrax Python API bindings', epilog="Pressing ctl+C at any time will exit the script. In interactive mode, x will exit the script.") #, add_help=True, formatter_class=argparse.ArgumentDefaultsHelpFormatter) 
 
+         self.cl_mode()  
          if mode == "interactive":
-
               self.interactive()
-
-         else:
-
-              self.cl_mode()  
+         elif mode == "prefab":
+              self.prefab(prefab)
+       
 
      def interactive(self):
 
-         print "Interactive mode"
-
          self.cl_mode()  
-
          self.parser.set_defaults(number=3)
-
          self.args = self.parser.parse_args()
 
          return
@@ -671,332 +491,218 @@ class Caliban:
      def cl_mode(self):
 
          self.parser = argparse.ArgumentParser(prog="prospero",description='Rackspace open cloud services command and control script using the pyrax Python API bindings', epilog="Pressing ctl+C at any time will exit the script. In interactive mode, x will exit the script.") #, add_help=True, formatter_class=argparse.ArgumentDefaultsHelpFormatter) 
-
          controlgroup = self.parser.add_argument_group('controls','options that control the script behaviour')
-
          controlgroup.add_argument('--dryrun', help="dryrun help",action="store_true")
-
          controlgroup.add_argument('--setup', help="setup initial script environment", choices = ['defaults','custom'], metavar='<setup type>')
-
          controlgroup.add_argument('--interactive', help="help",action="store_true")
-
          controlgroup.add_argument('--version', action='version', version = "0.01")
-
          controlgroup.add_argument('-q','--quiet', help="suppress verbose output",action="store_true" )
-
          controlgroup.add_argument('--config',  help="use this configuration file",  metavar="<configuration file path>")
-
-         controlgroup.add_argument('--base',  help="use this as the base path",  metavar="<base path>")
-
-         controlgroup.add_argument('--log', help="use this file for log output", metavar="<log file path>")
-
          authgroup = self.parser.add_argument_group('authentication','options that are used for authentication')
-
          authgroup.add_argument("-u","--username", help="Your Rackspace Cloud Account User Name")
-
          authgroup.add_argument("-k", "--apikey", help="Your Rackspace Cloud Account API Key")
-
          authgroup.add_argument('--pyrax', help="use the pryrax configuration file for credentials." , metavar='<pyrax config file path>')
-
          authgroup.add_argument('--ident', help="use this alternative identity file for pyrax credentials", metavar='<alt. pyrax identity file path>')
-
          objectgroup = self.parser.add_argument_group('objects', 'options for the --object option')
-
          objectgroup.add_argument("-O",'--object', help="the type of cloud object, e.g. server", type=str, choices=all_objects, metavar='<object type>')
-
+         objectgroup.add_argument('--runobject', help=argparse.SUPPRESS, nargs='+', action='append')
          objectgroup.add_argument('--name', help="the name of the cloud object, e.g. web for a server object", metavar ="<name>")
-
          objectgroup.add_argument('--uuid', help="the UUID of the cloud object", type=str) #, metavar = "<UUID>" )
-
          namegroup = self.parser.add_argument_group('names', 'options for the --autoname option used when generating multiple cloud objects of the same type')
-
          namegroup.add_argument('--autoname', help="automatically generate names when creating multiple objects", nargs=2, metavar='<name prefix> <simple|date>' )
-
          namegroup.add_argument('-n','--number', help="then number of cloud objects to add", metavar = "<number>")
-
          optiongroup = self.parser.add_argument_group('options', 'options for each --object <object>')
-
          prefabgroup = self.parser.add_argument_group('--object prefab', 'options for --object prefab')
-
-         prefabgroup.add_argument("--prefab", help="the prefab file to be used for --object prefab", metavar='<prefab file>')
-
+         prefabgroup.add_argument("--prefabs", help="the prefab file(s) to be used for --object prefab", metavar='<prefab file(s)>', nargs='+', action='append')
          servergroup = self.parser.add_argument_group('--object server', 'options for --object server')
-
          servergroup.add_argument('-i','--image', help="cloud server image uuid or name", metavar = '<name/uuid>')
-
          servergroup.add_argument('-f','--flavor', help="cloud server flavor id or RAM size" ,metavar = '<flavor id|RAM size>') 
-
          dnsgroup  = self.parser.add_argument_group('--object dns', 'options for --object dns')
-
          dnsgroup.add_argument('-z','--zone', help="DNS zone / fully qualified domain name", metavar = '<the fqdn for the (sub)domain zone>' )
-
          dnsgroup.add_argument('-r','--record', help="the DNS recored type to add and the resource it is mapped to, e.g --record A 192.168.1.1",  metavar = '<A|CNAME|TXT|MX|SRV> <ip|hostname>')
-
          filesgroup  = self.parser.add_argument_group('--object cloudfiles', 'options for  --object cloudfiles')
-
          filesgroup  = self.parser.add_argument_group('--object cdn', 'options for  --object cdn')
-
          filesgroup  = self.parser.add_argument_group('--object file', 'options for  --object files')
-
          dbgroup= self.parser.add_argument_group('--object clouddb', 'options for --object cloudb ,i.e a cloud datbase instance')
-
          dbgroup= self.parser.add_argument_group('--object db', 'options for --object db ,i.e a datbase running on a clouddb')
-
          dbgroup.add_argument('--dbtype', help="the cloud database type", choices = ['MySQL','MSSQL'])
-
          lbgroup  = self.parser.add_argument_group('--object lb/loadbalancer', 'options for  --object lb/loadbalancer')
-
          lbgroup.add_argument('--port', help="loadbalancer port to listen on", metavar='<port number>')
-
          lbgroup.add_argument('--vip', help="virtual IP to assign to the loadbalancer object", metavar = '<virtual ip address>')
-
          lbgroup.add_argument('--algorithm', help="the cloud load balancer algorithm", choices = ['random','round _robin','weighted_round_robin','least_conns','weighted_least_conns'])
-
          actiongroup  = self.parser.add_argument_group('actions', 'options for the --object <object> --action  option')
-
          actiongroup.add_argument('-A','--action', nargs=1, choices=all_actions, help="action to be taken on cloud object or tempest script object") 
 
-         self.args = self.parser.parse_args()
+
+     def show(self):
+                print self.parser.parse_args()
 
      def get(self):
-
+         self.args = self.parser.parse_args()
          return self.args
+
+     def prefab(self,prefab=False):
+         #self.args = prefab.argwalk(self.parser)
+         prefab.argwalk(self.parser)
 
      def check(self):
 
-         if self.args.prefab and not self.args.object == "prefab":
+         if self.args.prefabs and not self.args.object == "prefab":
+             self.parser.error('--prefabs requires --object prefab.')
 
-             self.parser.error('--prefab requires --object prefab.')
-
-         if self.args.object == "prefab" and self.args.action  in ['clone','edit','delete','show','rename'] and not self.args.prefab:
-
+         if self.args.object == "prefab" and self.args.action  in ['clone','edit','delete','show','rename'] and not self.args.prefabs:
             self.parser.error('the --object prefab %(args.action) option requires --prefab <file>.') 
 
          if self.args.image  and not self.args.object == "server":
-
             self.parser.error('-i/--image requires --object %(args.object).')
 
          if self.args.flavor  and not self.args.object == "server":
-
             self.parser.error('-f/--flavor requires --object %(args.object).')
 
          if self.args.action and not self.args.object:
-
             self.parser.error('--action requires --object.')
 
          if self.args.object and not self.args.action:
-
             self.parser.error('--object  requires --action.')
 
 # Logging
-
-logger = log.getLogger('prospero_logger')
+# Miranda the witness to it all and the future
 log.basicConfig(level=log.DEBUG,
-                    format='%(asctime)s %(name)-4s %(levelname)-4s %(message)s',
+                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
                     datefmt='%m-%d %H:%M',
                     filename=logfile,
                     filemode='w')
+logger = log.getLogger("tempest")
+fhandler = log.FileHandler( logfile )
+fhandler.setLevel(log.DEBUG)
+logger.addHandler(fhandler)
+chandler = log.StreamHandler()
+cformat = log.Formatter('%(levelname)-2s %(message)s')
+chandler.setFormatter(cformat)
+chandler.setLevel(log.INFO)
+logger.addHandler(chandler)
+console = logger
 
-obj_log = log.FileHandler(objectlog)
-objectformat = log.Formatter('%(message)s')
-obj_log.setFormatter(objectformat)
-obj_logger = log.getLogger('object_logger')
-obj_logger.addHandler(obj_log)
-console = log.getLogger('prospero_console')
-ch = log.StreamHandler()
-ch.setLevel(log.INFO)
-chformat = log.Formatter('%(levelname)-2s %(message)s')
-ch.setFormatter(chformat)
-console.addHandler(ch)
-
+#    def __init__(self):
 def main():
 
-    global logfile
     arguments = Caliban()
     args = arguments.get()
 
-    if args.log:
+    if args.quiet:
+       fhandler.setLevel(log.INFO) 
+       chandler.setLevel(log.CRITICAL) 
 
-        logfile = args.log
-
-    else:
-
-        altlog  = log.FileHandler(logfile)
-
-        logger.addHandler(altlog)
+    console.info("Verbose: True")
+    console.info ("Log File: %s" %logfile)
+    if args.username:
+        console.info ("Cloud Account User Name: %s" %args.username)
+    if args.apikey:
+        console.info ("Cloud Account API Key: %s" %args.apikey)
 
     if args.interactive or not args:
-
         interactive  = Caliban("interactive")
-
         args = interactive.get()
-
         print args.number
-
         exit()
-    if args.base:
 
-        base = args.base
-
-    else:
-
-        base = default_base
-
-    if args.setup == "defaults":
-
-       if args.object == "config":
-
-          config_file = args.config
-
-       else:
-
-          config_file = default_config
-
-       print args.setup
-       defaults = Prefab( default_sections,base,config_file,args.setup)
-
-       defaults.save()
+    base = default_base
 
     if args.config:
 
-        config_file = args.config
+         config_file = args.config
 
     else:
 
-        config_file = default_config
-        base = default_base
+         config_file = default_config
 
-    current = Prefab(False,base,config_file,False)
 
-    current.load()
+    if args.setup == "defaults":
+
+       setup  = Prospero( default_sections,base,config_file,args.setup)
+       setup.save()
+
+    defaults  = Prospero( False ,base,config_file)
+    defaults.load()
+    defaults.show()
+    current = Caliban("prefab",defaults) 
+    args = current.get()
+    current.show()
+    
+    prefabpath=args.prefabpath
+    if args.object == 'prefab' and args.prefabs and args.prefabpath:
+       for prefabfiles in args.prefabs:
+          for prefabfile in prefabfiles:  
+              print prefabpath,prefabfile
+              prefab = Prospero(False,prefabpath,prefabfile,False)
+              prefab.load()
+              showprefab  = Caliban("prefab",prefab) 
+              showprefab.get()
+              showprefab.show()
+              if "run" in args.action:
+                 runargs = Caliban("prefab",prefab) 
+                 run  = runargs.get()
+                 runargs.show()
 
     if args.username:
-
         username = args.username
 
     if args.apikey:
-
         apikey = args.apikey
 
-    if not args.quiet:
-
-        console.info("Verbose: True")
-
-        console.info ("Log File: %s" %logfile)
-
-        if args.username:
-
-           console.info ("Cloud Account User Name: %s" %args.username)
-
-        if args.apikey:
-
-           console.info ("Cloud Account API Key: %s" %args.apikey)
-
-        if args.ident:
-
-           console.info ("Cloud Account identity file: %s" %args.ident)
-
-
-    if args.pyrax:
-
-        pyrax = args.pyrax
-
-    else:
-
-        pyraxfile = current.get("tempest","pyrax")
-
-        pyraxpath = current.get("tempest","pyraxpath")
-
-        pyrax = os.path.join(pyraxpath,pyraxfile)
-
     if args.ident:
-
         ident = args.ident
-
     else:
+        ident = os.path.join(args.identpath,args.default_ident) 
 
-        identfile = current.get("tempest","ident")
-
-        identpath = current.get("tempest","identpath")
-
-        ident = os.path.join(identpath,identfile)
-
-    if args.flavor:
-
-        flavor = args.flavor
-
+    console.info ("Cloud Account identity file: %s" %ident)
+    if args.pyrax:
+        pyrax = args.pyrax
     else:
+        pyrax = os.path.join(args.pyraxpath,args.default_pyrax) 
 
-         flavor  = current.get("server","flavor")
-
-    if args.image:
-
-         image  = args.image
-
-    else:
-
-         image  = current.get("server","image")
+ 
+    tempest = Tempest(args.username,args.apikey,ident,pyrax,True)
 
     if args.name:
 
          name = args.name
 
-    # __init__(logger,username=False,apikey=False,ident=False,pyrax=False,keyring=False):
-
-    tempest = Tempest(args.username,args.apikey,ident,pyrax,True)
-
     if args.object == "server" and "list" in args.action:
-
         tempest.list(args.object)
 
 
     if args.object == "server" and "add" in args.action and args.name and args.image and args.flavor:
-
         if not args.quiet:
-
             tempest.list(args.object)
-
         tempest.create("server",name,str(args.image),args.flavor)
 
         if not args.quiet:
-
             tempest.list(args.object)
 
     if args.object == "server" and "delete" in args.action and args.uuid:
-
         if not args.quiet:
-
             tempest.list(args.object)
 
         console.info( "ACTION: Delete %s" %args.uuid )
-
         tempest.delete("server",str(args.uuid))
 
         if not args.quiet:
-
             tempest.list(args.object)
 
-
     if args.object == 'server' and "show" in args.action and args.uuid:
-
         tempest.show(args.object,args.uuid)
 
-
     if args.object == 'config' and "show" in args.action:
-
         current.show()
 
+#def main():
 
-# Add keyboard interrupt ctl+C
+
 if __name__ == "__main__":
 
     try:
-
        main()
-
     except KeyboardInterrupt:
-
        pass
-
-   
 
