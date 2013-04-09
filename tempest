@@ -8,6 +8,7 @@ import ConfigParser
 import configobj
 from configobj import ConfigObj
 import os,sys
+import re
 import signal
 import errno
 import warnings
@@ -21,22 +22,23 @@ default_config = 'tempest_defaults.cfg'
 default_html = "<html>Default %s index.html</html>" %__file__
 logfile = os.path.join(default_base,'logs','tempest.log')
 prefab_lilst = os.path.join(default_base,'prefabs','prefab.lst')
-default_sections = ["tempest","server","dns","files","db","lb"]
+default_sections = ["tempest","server","dns","files","db","lb",'net','cbs']
 
 tempest_objects=['config','auth','prefab']
-cloud_objects=['server','dns','cloudfiles','cdn','file','clouddb','db','dbauth''cloudlb','lbnode','ssl','blkstore']
+cloud_objects=['server','dns','cloudfiles','cdn','clouddb','db','dbauth''cloudlb','lbnode','ssl','cbs','snap']
 common_actions=['list', 'show','add', 'delete', 'rename', 'edit', 'clone','on','off']
 prefab_actions=['run']
 server_actions=['resize', 'revert', 'confirm','reboot']
-#dns_actions=[]
-#files_actions=[]
-db_actions=['import','export']
+db_actions=['resize']
+#db_actions=[]
+files_actions=['upload','download','sync']
+dns_actions=['import','export']
 #lb_actions=[]
-#bs_actions=[]
+bs_actions=['attach','detach']
 
 all_objects = tempest_objects + cloud_objects
 #all_actions = common_actions + prefab_actions + server_actions + dns_actions + files_actions + db_actions + lb_actions + bs_actions
-all_actions = common_actions + prefab_actions + server_actions  + db_actions 
+all_actions = common_actions + prefab_actions + server_actions  + files_actions + dns_actions + bs_actions
 
 warnings.filterwarnings(
     'ignore',
@@ -48,9 +50,9 @@ warnings.filterwarnings(
 import novaclient
 from novaclient import exceptions 
 from pyrax import exceptions
-class Miranda (Exception):
+class Prospero (Exception):
 
-     """Miranda  unspecified error."""
+     """Prospero  unspecified error."""
 
      pass
 
@@ -66,11 +68,10 @@ class TempestError(Exception):
 
      pass
 
-# config - Prospero - the magister gives the commands
-class Prospero:
+# config - Miranda - the magister gives the commands
+class Miranda:
 
-    def __init__(self, sections=default_sections, base=default_base, file=False, option=None):
-
+    def __init__(self, sections, base, file=False, option=None):
         self.sections = sections
         self.option = option
         self.defaults = option
@@ -119,11 +120,11 @@ class Prospero:
         if section == 'lb':
             self._lb(section)
 
-        if section == 'blockstore':
-            self._bs(section)
+        if section == 'cbs':
+            self._cbs(section)
 
-        if section == 'network':
-            self._network(section)
+        if section == 'net':
+            self._net(section)
 
     def setpaths(self):
 
@@ -233,6 +234,8 @@ class Prospero:
             self.prefab[str(section)]['description'] = 'Cloud DNS Defaults'
             self.prefab[str(section)]['zone'] = 'example.com'
             self.prefab[str(section)]['record'] = 'A'
+            self.prefab[str(section)]['TTL'] = 300
+            self.prefab[str(section)]['email'] = 'webmaster@%s' %self.prefab[str(section)]['zone']
 
             return
 
@@ -256,6 +259,8 @@ class Prospero:
             self.prefab[str(section)]['description'] = 'Cloud Databases Defaults'
             self.prefab[str(section)]['dbtype'] = 'MySQL'
             self.prefab[str(section)]['dbprefix'] = 'raxdb'
+            self.prefab[str(section)]['flavor'] = 2
+            self.prefab[str(section)]['volume'] = 2
 
             return
 
@@ -269,16 +274,17 @@ class Prospero:
 
             return
 
-    def _bs(self,section):
+    def _cbs(self,section):
         
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud Block Storage Defaults'
             self.prefab[str(section)]['datastore'] = 'cloudstore'
+            self.prefab[str(section)]['type'] = 1
             self.prefab[str(section)]['bsprefix'] = 'raxcbs'
 
             return
 
-    def _network(self,section):
+    def _net(self,section):
 
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud Networks Defaults'
@@ -318,12 +324,13 @@ class Tempest:
        
        for num in xrange ( 0, int(number) ):   
            if autotype  == "simple":
-              console.debug( autotype)
-              self.names.append( '.'.join([prefix,str(num+1)])) 
+              val = prefix + '.' + str(num+1)
+              self.names.append( val )
            elif autotype == "date":
               now  = datetime.datetime.now()
-              datestr = now.strftime('%Y%m%d%H%M"')
-              self.names.append( '.'.join([prefix,datestr,str(num+1)])) 
+              datestr = now.strftime('%Y%m%d%H%M')
+              val = prefix + '.' + datestr + '.' + str(num+1)
+              self.names.append( val )
            else:
               console.error("Unkown autoname type %s", autotype)
 
@@ -335,66 +342,148 @@ class Tempest:
           self._srv_create(*args)
 
    def _srv_create(self,name,flavor,image):
-
-           server = self.cslist.servers.create(name,flavor,image)
+           #console.debug('Add: %(name) %(flavor) %(image)')
+           server = self.cslist.servers.create(str(name),flavor,image)
            if server:
                console.info( "ID: %s" %str(server.id) )
                console.info( "Status: %s" %server.status )
                console.info( "Admin password: %s" %server.adminPass )
                console.info( "Networks: %s" %server.networks )
 
-   def delete(self,obj_type,id):             
+   def delete(self,obj_type,uuid):             
 
        try:
-          if obj_type == "server" or "servers" and args and len(args) == 1:
-              self._srv_delete(id)
-
+          if obj_type == "server":
+              self._srv_delete(uuid)
        except Exception:
-           logger.exception("Unable to delete object with uuid or name: %s" %id)
-           console.error("Unable to delete object with uuid or name: %s" %id)
+           console.error("Unable to delete object with uuid or name: %s" %uuid)
            pass
 
            return
 
-   def _srv_delete(self,id):
+   def clone(self,obj_type,obj,name):
+       if obj_type == "server":
+           self._srv_clone(obj,name)
 
-       server = self.valid("server",id)
-       print server
+   def _srv_image(self,server,name):
+       console.debug('Image: %s' %server)
+       image = server.create_image(name)
+       return image
+
+   def _srv_clone(self,obj,namelist):
+       server = self.valid("server",obj)
+       now  = datetime.datetime.now()
+       imagename = server.name + '.' + now.strftime('%Y%m%d%H%M')
+       console.debug('Imaging: %s' %obj + 'as %s' %imagename )
+       image = self._srv_image(server,imagename) 
+       print image
+       check = self.cslist.images.list(image)
+       print check
+          
+       
+       #console.debug(clone.id)
+
+   def _srv_delete(self,obj):
+
+       server = self.valid("server",obj)
+       console.debug('Delete: %s' %server)
        try:
+            console.info ( "ACTION: deleted server with UUID: %s" %obj )
             server.delete() 
-            console.info ( "ACTION: deleted server with UUID or name: %s" %id )
        except Exception:
-            console.error("unable to delete UUID: %s" %id)
+            console.error("unable to delete UUID: %s" %obj)
             pass 
 
             return
 
-   def valid(self,obj_type,id):
+   def valid(self,obj_type,obj):
 
        try:
            if obj_type == "server":
-               return self._srv_valid(id) 
+               return self._srv_valid(obj) 
+           if obj_type == "flavor":
+               return self._flv_valid(obj) 
+           if obj_type == "image":
+               return self._img_valid(obj) 
        except Exception:
-           logger.exception("Unable to find object with uuid or name: %s" %id)
-           console.error("Unable to find object with uuid or name: %s" %id)
+           console.error("Unable to find object with uuid or name: %s" %obj)
            pass
 
    def _srv_valid(self,id):
-       try:
-           server = self.cslist.servers.get(id)
+        server = self.cslist.servers.get(str(id))
+        if server.name:
+           console.debug('Valid: %s' %server)
            return server
-       except Exception:
-           pass
+        
 
-       except novaclient.exceptions.NotFound:
-           logger.exception("UUID %s invalid or not found" %id)
-           console.error("UUID %s invalid or not found" %id)
-           pass
-           return
+   def imagelist(self):
+        imgs = self.cslist.images.list()
+        for img in imgs:
+            print img.name, " UUID:", img.id
+        return
+
+   def flavorlist(self):
+        flvs = self.cslist.flavors.list()
+        for flv in flvs:
+            print "Name:", flv.name
+            print "  ID:", flv.id
+            print "  RAM:", flv.ram
+            print "  Disk:", flv.disk
+            print "  VCPUs:", flv.vcpus
+        return
+
+   def _img_valid(self,image):
+        matchcount = 0
+        imgs = self.cslist.images.list()
+        idmatch = False
+        for img in imgs:
+           if image in img.name:
+              idmatch = img.id
+              matchcount += 1
+              print "Image Name: %s" %img.name
+              print "Image ID: %s" %img.id
+           elif image in img.id:
+              idmatch = img.id
+              matchcount += 1
+              print "Image Name: %s" %img.name
+              print "Image ID: %s" %img.id
+        if matchcount > 1:
+           console.error ("more than one image match was found. Please, be more specific in your request, e.g. -i 'CentOS 6.0'")
+           return False
+        elif not idmatch:
+           console.error ( "The image, %s , was not found in the list of available images. Please, check the value and try again." %image )
+           return False
+        else:
+           return idmatch
+
+   def _flv_valid(self,flavor):
+        matchcount = 0
+        flvs = self.cslist.flavors.list()
+        idmatch = False
+        for flv in flvs:
+            if str(flavor) in str(flv.id):
+               idmatch = flv.id
+               matchcount += 1
+               print "Flavor ID: %s" %flv.id
+               print "Flavor RAM: %s" %flv.ram
+            elif flavor == flv.ram:
+               print "Flavor ID: %s" %flv.id
+               print "Flavor RAM: %s" %flv.ram
+               matchcount += 1
+               idmatch = flv.id
+        if matchcount > 1:
+            console.error (" More than one flavor match was found. Please, be more specific in your request, e.g. -f 4096 or -f 3")
+            return False
+        elif not idmatch:
+            console.error ( "ERROR: The flavor, %s , was not found in the list of available flavors. Please, check the value and try again." %flavor)
+            return False
+        else:
+            return idmatch
+
 
    def show(self,obj_type,id):
 
-       if obj_type == "server" or "servers" and args and len(args) == 1:
+       if obj_type == "server":
           try:
               self._srv_show(id)
           except Exception:
@@ -403,13 +492,31 @@ class Tempest:
               pass
 
    def get(self,obj_type,match,id):
-           value = 'placekeeper'
-           return value
+        value = 'placekeeper'
+        return value
+
+   def _dns_list(self,obj_type):
+       if obj_type == 'domain':
+          for domain in self.dns.get_domain_iterator():
+              print domain.name
+              for rec in self.dns.get_record_iterator(domain):
+                  print rec
+              for sub in self.dns.get_subdomains_iterator(domain):
+                  print sub.name
+                  recs = sub.list_records()
+                  for rec in self.dns.get_record_iterator(sub):
+                      print rec
+       if obj_type == 'PTR':
+           print self.dns.list_ptr_records(device)
+
+   def _dns_create(self,obj_type):
+        value = 'placekeeper'
+        return value
+     
 
    def _srv_show(self,id):
 
        server = self.cslist.servers.get(id)
-
        try:
            print
            print "Server Name:", server.name
@@ -427,27 +534,64 @@ class Tempest:
 
    def list(self,obj_type=False):
 
-       if obj_type  == "server" or "servers":
-           servers = self.cslist.servers.list()
+       if obj_type  == "server":
+           self._srv_list()
+
+   def name_to_uuid(self,obj_type,namelist):
+       uuidlist=[]
+       for name in namelist:
+           if obj_type == 'server':
+               for server in self.cslist.list():
+                   console.debug (server.name)
+                   sublist = []
+                   if str(server.name)  ==  name:
+                      uuid = server.id
+                      console.debug('Match: %(server.name) %(uuid)')
+                      sublist.append(uuid)
+                   if len(sublist) == 1:       
+                      uuidlist =+sublist
+                   elif len(sublist) == 0:
+                      console.critical('no matches list of names, %s, please check and retry.' %namelist)
+                      exit()
+                   else:
+                      console.critical('more than one match in the list of names, %s, please check and retry.' %namelist)
+                      exit()
+       return uuidlist
+                    
+   def _srv_list(self,status=False):
+       active = False
+       servers = self.cslist.servers.list()
+       if servers:
            for server in servers:
-               try:
-                   if server.status == "ACTIVE" or 'BUILD':
-                       active = server
-               except IndexError:
-                   logger.critical ("there are no active servers in your account.")
-                   console.critical ("there are no active servers in your account.")
+               if server.status == "ACTIVE" or server.status == 'BUILD':
+                   active = server
+               elif server.status == "DELETED":
+                   deleted = server
+               if active:
+                   self.show('server',active)
+       else:
+           console.warning("there are no active servers in your account.")
+          
+   
+   def _files_show(self):
+       print self.cfiles.get_account_metadata()
+       print list_containers_info()
 
-                   return
 
-               # Display server info
-
-               if active.name:
-                  self.show(obj_type,active)
+   def _connect(self):
+       self.cslist  = pyrax.cloudservers
+       self.dns = pyrax.cloud_dns
+       #pyrax.cloud_dns.set_timeout(30)
+       self.cfiles = pyrax.cloudfiles
+       self.net = pyrax.cloud_networks
+       self.db  = pyrax.cloud_databases
+       self.lb = pyrax.cloud_loadbalancers
+       self.bs = pyrax.cloud_blockstorage
 
    def auth(self):
 
        if pyrax.identity.authenticated:
-           self.cslist  = pyrax.cloudservers
+           self._connect()
            return
        else:
            if self.username and self.apikey:
@@ -456,6 +600,7 @@ class Tempest:
                    logger.warn("invalid user name or apikey, check the values and try again.")
 
            if not pyrax.identity.authenticated and self.ident:
+               console.info ("using alternate pyrax identity file: %s" %self.ident)
                try:
                    with open(self.ident): pass
                    try: pyrax.set_credential_file(self.ident)
@@ -463,11 +608,12 @@ class Tempest:
                except IOError: pass 
 
            if not pyrax.identity.authenticated and self.pyrax and self.keyring:
+               console.info ("using pyrax file: %s" %self.pyrax)
                try:
                    with open(self.pyrax): pass
+                   try: pyrax.keyring_auth() 
+                   except NameError: pass 
                except IOError: pass
-               try: pyrax.keyring_auth() 
-               except: pass 
 
            if not pyrax.identity.authenticated:
                console.info("keyring and ident file authentication failed, trying manual authentication.")
@@ -488,7 +634,7 @@ class Tempest:
 
            if pyrax.identity.authenticated and pyrax.cloudservers:
                console.info("authentication sucessful")
-               self.cslist  = pyrax.cloudservers
+               self._connect()
 
                return
 
@@ -523,7 +669,6 @@ def getanswer(question):
 class Caliban:
 
      def __init__(self,mode=False,prefab=False):
-
          self.parser = argparse.ArgumentParser(prog=__file__,description='Rackspace open cloud services command and control script using the pyrax Python API bindings', epilog="Pressing ctl+C at any time will exit the script. In interactive mode, x will exit the script.") #, add_help=True, formatter_class=argparse.ArgumentDefaultsHelpFormatter) 
 
          self.cl_mode()  
@@ -559,7 +704,7 @@ class Caliban:
          objectgroup = self.parser.add_argument_group('objects', 'options for the --object option')
          objectgroup.add_argument("-O",'--object', help="the type of cloud object, e.g. server", type=str, choices=all_objects, metavar='<object type>')
          objectgroup.add_argument('--name', help="the name(s) of the cloud object, e.g. for two server objects --name web1 web2", metavar ="<name(s)>", nargs='+', action='append')
-         objectgroup.add_argument('--uuid', help="the UUID of the cloud object", type=str , metavar = "<UUID>" )
+         objectgroup.add_argument('--uuid', help="the UUID(s) of the cloud object", type=str , metavar = "<UUID(s)>" , nargs='+', action='append')
          namegroup = self.parser.add_argument_group('names', 'options for the --autoname option used when generating multiple cloud objects of the same type')
          namegroup.add_argument('--autoname', help="automatically generate names when creating multiple objects", nargs=2, metavar='<name prefix> < simple|date >' )
          namegroup.add_argument('-n','--number', help="then number of cloud objects to add", default=1,type=int,  metavar = "<number>")
@@ -570,20 +715,23 @@ class Caliban:
          servergroup.add_argument('-i','--image', help="cloud server image uuid or name", metavar = '<name/uuid>')
          servergroup.add_argument('-f','--flavor', help="cloud server flavor id or RAM size, e.g. -f 512" ,metavar = '<flavor id|RAM size>') 
          dnsgroup  = self.parser.add_argument_group('--object dns', 'options for --object dns')
-         dnsgroup.add_argument('-z','--zone', help="DNS zone / fully qualified domain name", metavar = '<the fqdn for the (sub)domain zone>' )
-         dnsgroup.add_argument('-r','--record', help="the DNS recored type to add and the resource it is mapped to, e.g --record A 192.168.1.1 or --record CNAME rax1.example.com",  metavar = '<A|CNAME|TXT|MX|SRV> <ip|hostname>', nargs=2)
-         dnsgroup.add_argument('--host','--subdomain', help="specify the host/subdomain object",  metavar = '<hostname>')
+         dnsgroup.add_argument('-z','--zone', help="DNS zone / fully qualified domain name or subdomain name, TTL and the email of the domain manager", metavar = '<the fqdn for the (sub)domain zone> <TTL> <email>', nargs=3, action='append' )
+         dnsgroup.add_argument('-r','--record', help="the DNS record type to add and the resource it is mapped to, e.g --record A 300 192.168.1.1 or --record CNAME 300 mail.example.com",  metavar = '<A|AAA|CNAME|TXT|MX> <TTL> [priority for M|] <ip|hostname>', nargs='?', action='append')
+         dnsgroup.add_argument('--PTR', help="add a PTR record, e.g --object dns --action add --PTR 192.168.111.111 example.com",  nargs=2, metavar = '<IP address> <hostname>')
+         dnsgroup.add_argument('--bind', help="a DNS zone BIND file to import",  metavar = '<BIND file>')
          filesgroup  = self.parser.add_argument_group('--object cloudfiles', 'options for  --object cloudfiles')
          filesgroup  = self.parser.add_argument_group('--object cdn', 'options for  --object cdn')
-         filesgroup  = self.parser.add_argument_group('--object file', 'options for  --object files')
+         filesgroup  = self.parser.add_argument_group('--object file', 'options for  --object file')
+         filesgroup  = self.parser.add_argument_group('--object directory', 'options for  --object directory')
          dbgroup= self.parser.add_argument_group('--object clouddb', 'options for --object cloudb ,i.e a cloud datbase instance')
          dbgroup= self.parser.add_argument_group('--object db', 'options for --object db ,i.e a datbase running on a clouddb')
-         dbgroup.add_argument('--dbtype', help="the cloud database type", choices = ['MySQL','MSSQL'])
+         dbgroup.add_argument('--volume', help="the cloud database instance storage volume size in GB, e.g. --volume 2", type=int , metavar='<volume size>' )
          lbgroup  = self.parser.add_argument_group('--object lb/loadbalancer', 'options for  --object lb/loadbalancer')
          lbgroup.add_argument('--port', help="loadbalancer port to listen on", metavar='<port number>')
          lbgroup.add_argument('--vip', help="virtual IP to assign to the loadbalancer object", metavar = '<virtual ip address>')
          lbgroup.add_argument('--algorithm', help="the cloud load balancer algorithm", choices = ['random','round _robin','weighted_round_robin','least_conns','weighted_least_conns'])
          bsgroup  = self.parser.add_argument_group('--object datastore', 'options for --object datastore')
+         bsgroup.add_argument('--type', help="storage type", metavar = '<SATA|SSD>' , choices = ['sata','SATA','ssd','SSD'])
          netgroup  = self.parser.add_argument_group('--object network', 'options for --object network')
          netgroup.add_argument('--net', help="add this cloud object to the specified cloud server network(s) this cloud object" ,metavar = '<cloud network(s)>', nargs='+', action='append') 
          actiongroup  = self.parser.add_argument_group('actions', 'options for the --object <object> --action  option')
@@ -621,6 +769,121 @@ class Caliban:
          if self.args.object and not self.args.action:
             self.parser.error('--object  requires --action.')
 
+# Prospero the witness to it all and the future
+class Prospero:
+  
+    def __init__(self,args,defaults):
+       
+        if args.debug:
+            print args
+        
+        if args.username:
+            username = args.username
+    
+        if args.apikey:
+            apikey = args.apikey
+    
+        if args.ident:
+            ident = args.ident
+        else:
+            ident = os.path.join(defaults.get('tempest','identpath'),defaults.get('tempest','default_ident')) 
+    
+        if args.pyrax:
+            pyrax = args.pyrax
+        else:
+            pyrax = os.path.join(defaults.get('tempest','pyraxpath'),defaults.get('tempest','default_pyrax')) 
+    
+     
+        tempest = Tempest(args.username,args.apikey,ident,pyrax,True)
+        if args.debug:
+            tempest.imagelist()
+            tempest.flavorlist()
+        if args.object == "server" and "list" in args.action:
+            tempest.list(args.object)
+            return
+        if args.uuid:
+            uuidlist = args.uuid[0]
+            #console.debug( 'uuidlist: %s' %uuidlist)
+        if args.name:
+            namelist = args.name[0] 
+            #console.debug( 'namelist: %s' %namelist)
+        if args.autoname and args.number:
+            namelist = tempest.autoname(args.object ,args.number,args.autoname)
+        elif args.number >1 and len(namelist) == 1: 
+            newauto = [namelist[0], 'simple']
+            namelist = tempest.autoname(args.object ,args.number,newauto)
+    
+        if args.object == "server" and "add" in args.action and namelist:
+
+            if not args.image:    
+                image = defaults.get('server','image')
+            elif args.image:
+                image = args.image
+    
+            if tempest.valid('image',image):
+                console.debug('Image: %s' %image)
+            else:
+                console.critical('invalid image %s' %args.image)
+                exit()
+    
+            if not args.flavor:
+                flavor = defaults.get('server','flavor')
+            elif not args.flavor: 
+                flavor = args.flavor
+
+            if tempest.valid('flavor',flavor):
+                console.debug('Flavor: %s' %flavor)
+            else:
+                console.critical('invalid flavor %s' %args.image)
+                exit()
+             
+            if args.name or args.autoname and image and flavor:
+                #if args.debug:
+                    #tempest.list(args.object)
+                
+                console.debug ( namelist )
+                for val in namelist:
+                    console.debug ( 'Name: %s' %val )
+                    tempest.create(args.object,val,image,flavor)
+        
+                #if args.debug:
+                    #tempest.list(args.object)
+        
+        if args.uuid and args.object == "server" and "delete" in args.action:
+            if args.debug:
+                tempest.list(args.object)
+
+            #if namelist:
+               #uuidlist = tempest.name_to_uuid('server',namelist)
+               
+            if uuidlist:
+                 for uuid in uuidlist:
+                    console.debug( "ACTION: Delete %s" %uuid )
+                    tempest.delete(args.object,uuid)
+    
+            if args.debug:
+                tempest.list(args.object)
+
+        if args.name and args.uuid and args.object == "server" and "clone" in args.action:
+            if args.debug:
+                tempest.list(args.object)
+            
+            if uuidlist and len(uuidlist) == 1:
+                for uuid in uuidlist:
+                    console.debug( "ACTION: Clone %s" %uuid + ' as %s' %namelist )
+                    tempest.clone(args.object,uuid,namelist)
+            else:
+                console.error('Cloning of more than one object is currently not suported.')
+                return
+               
+            if args.debug:
+                tempest.list(args.object)
+
+        if args.object == 'server' and "show" in args.action and uuidlist:
+            for id in uuidlist:
+                tempest.show(args.object,id[0])
+    
+        return
 # Logging
 log.basicConfig(level=log.DEBUG,
                     format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
@@ -628,6 +891,7 @@ log.basicConfig(level=log.DEBUG,
                     filename=logfile,
                     filemode='w')
 logger = log.getLogger("tempest")
+console = logger
 fhandler = log.FileHandler( logfile )
 fhandler.setLevel(log.DEBUG)
 logger.addHandler(fhandler)
@@ -636,129 +900,46 @@ cformat = log.Formatter('%(levelname)-2s %(message)s')
 chandler.setFormatter(cformat)
 chandler.setLevel(log.INFO)
 logger.addHandler(chandler)
-console = logger
-# Miranda the witness to it all and the future
-class Miranda:
-
-    def __init__(self,args):
-
-        self.args = args
-
-        if self.args.username:
-            console.info ("Cloud Account User Name: %s" %args.username)
-        if self.args.apikey:
-            console.info ("Cloud Account API Key: %s" %args.apikey)
-    
-        if self.args.interactive or not self.args:
-            interactive  = Caliban("interactive")
-            args = interactive.get()
-            print args.number
-            exit()
-    
-        prefabpath=self.args.prefabpath
-        if self.args.object == 'prefab' and self.args.prefabs and self.args.prefabpath:
-           for prefabfiles in self.args.prefabs:
-              for prefabfile in prefabfiles:  
-                  print prefabpath,prefabfile
-                  prefab = Prospero(False,prefabpath,prefabfile,False)
-                  prefab.load()
-                  showprefab  = Caliban("prefab",prefab) 
-                  showprefab.get()
-                  #if self.args.debug:
-                      #showprefab.show()
-                  if "run" in self.args.action:
-                     runargs = Caliban("prefab",prefab) 
-                     run  = runself.args.get()
-                     #if arg.debug:
-                        #runself.args.show()
-    
-    
-        if self.args.username:
-            username = self.args.username
-    
-        if self.args.apikey:
-            apikey = self.args.apikey
-    
-        if self.args.ident:
-            ident = self.args.ident
-        else:
-            ident = os.path.join(self.args.identpath,self.args.default_ident) 
-    
-        console.info ("Cloud Account identity file: %s" %ident)
-        if self.args.pyrax:
-            pyrax = self.args.pyrax
-        else:
-            pyrax = os.path.join(self.args.pyraxpath,self.args.default_pyrax) 
-    
-     
-        tempest = Tempest(self.args.username,self.args.apikey,ident,pyrax,True)
-    
-        if self.args.autoname:
-           namelist = tempest.autoname(self.args.object ,self.args.number,self.args.autoname)
-           console.debug ( namelist )
-        if self.args.name:
-    
-             name = self.args.name
-    
-        if self.args.object == "server" and "list" in self.args.action:
-            tempest.list(self.args.object)
-    
-    
-        if self.args.object == "server" and "add" in self.args.action and self.args.name and self.args.image and self.args.flavor:
-            if not self.args.quiet:
-                tempest.list(self.args.object)
-            tempest.create("server",name,str(self.args.image),self.args.flavor)
-    
-            if not self.args.quiet:
-                tempest.list(self.args.object)
-    
-        if self.args.object == "server" and "delete" in self.args.action and self.args.uuid:
-            if not self.args.quiet:
-                tempest.list(self.args.object)
-    
-            console.info( "ACTION: Delete %s" %self.args.uuid )
-            tempest.delete("server",str(self.args.uuid))
-    
-            if not self.args.quiet:
-                tempest.list(self.args.object)
-    
-        if self.args.object == 'server' and "show" in self.args.action and self.args.uuid:
-            tempest.show(self.args.object,self.args.uuid)
-    
-        return
 
 def main():
-    config = default_config
+    configfile = default_config
     base = default_base
-
-    prefab  = Prospero( default_sections ,base,config)
-    arguments = Caliban(prefab)
+    sections = default_sections
+    console.debug(sections)
+    defaults  = Miranda( sections ,base,configfile)
+    arguments = Caliban(defaults)
+    defaults.load()
     args = arguments.get()
-    prefab.load()
-    if args.debug:
-       arguments.show()
-       prefab.show()
+    if args.interactive or not args:
+        interactive  = Caliban("interactive")
+        args = interactive.get()
+        print args.number
+        exit()
+
+    #if args.debug:
+       #arguments.show()
+       #prefab.show()
 
     if args.setup == "defaults":
-        setup  = Prospero( default_sections,default_base,default_config,args.setup)
-        setup.load()
-        setup.save()
-        setup.show()
-        return
+        defaults  = Miranda( sections,default_base,default_config,args.setup)
+        default_args = Caliban(defaults)
+        defaults.save()
+        defaults.load()
+        defaults.show()
 
     if args.config:
-       config = args.config
-       base = os.path.basename(config)
-       prefab = Prospero( default_sections ,base,config)
-       arguments = Caliban(prefab)
+       configifile = args.config
+       base = os.path.basename(configfile)
+       defaults = Miranda( sections ,base,configfile)
+       arguments = Caliban(configfile)
        args = arguments.get()
        prefab.load()
        if args.debug:
            arguments.show()
-           prefab.show()
-    print base,config
-    configpath = os.path.join ( os.path.expanduser(base) , config)
+           defaults.show()
+    configpath = os.path.join ( os.path.expanduser(base) , configfile)
     console.info ("Config File: %s" %configpath)
+
     if args.quiet:
         fhandler.setLevel(log.INFO)
         chandler.setLevel(log.CRITICAL)
@@ -773,9 +954,10 @@ def main():
 
     console.debug ( "name(s): %s" %args.name)
     if args.object == 'config' and "show" in args.action:
-        prefab.show()
+        defaults.show()
+
+    Prospero(args,defaults)
     return
-    Miranda(args)
 
 if __name__ == "__main__":
 
