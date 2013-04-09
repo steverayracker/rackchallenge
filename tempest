@@ -14,6 +14,26 @@ import errno
 import warnings
 import keyring
 
+#
+# The Tempest - a Rackspace cloud command and control script using the pyrax bindings to the OpenStack API
+# https://en.wikipedia.org/wiki/The_Tempest
+# All apologies to Wm. Shakespeare
+#Dramatis Personae 
+# Prosepero   - the magister gives the commands
+#               https://en.wikipedia.org/wiki/Prospero
+#               command process control and argument interpreter
+# Miranda     - the witness to it all and the future
+#               https://en.wikipedia.org/wiki/Miranda_%28The_Tempest%29
+#               configuration management and prefab generation tools
+# Caliban     - the slave who does all the work
+#               https://en.wikipedia.org/wiki/Caliban_%28The_Tempest%29
+#               argument setup and processing
+# Ariel       - the performer of the real magic
+#               https://en.wikipedia.org/wiki/Ariel_%28The_Tempest%29
+#               class using pyrax to make API calls
+#
+
+# Globals
 global logfile
 # Defaults
 default_base = os.path.expanduser("~/.tempest")
@@ -25,7 +45,7 @@ prefab_lilst = os.path.join(default_base,'prefabs','prefab.lst')
 default_sections = ["tempest","server","dns","files","db","lb",'net','cbs']
 
 tempest_objects=['config','auth','prefab']
-cloud_objects=['server','dns','cloudfiles','cdn','clouddb','db','dbauth''cloudlb','lbnode','ssl','cbs','snap']
+cloud_objects=['server','image','flavor','dns','cloudfiles','cdn','clouddb','db','dbauth','cloudlb','lbnode','ssl','cbs','snap']
 common_actions=['list', 'show','add', 'delete', 'rename', 'edit', 'clone','on','off']
 prefab_actions=['run']
 server_actions=['resize', 'revert', 'confirm','reboot']
@@ -62,13 +82,12 @@ class CalibanError(Exception):
 
      pass
 
-class TempestError(Exception):
+class ArielError(Exception):
 
-     """Tempest unspecified error."""
+     """Ariel unspecified error."""
 
      pass
 
-# config - Miranda - the magister gives the commands
 class Miranda:
 
     def __init__(self, sections, base, file=False, option=None):
@@ -293,8 +312,7 @@ class Miranda:
 
             return
 
-# Class for application fuctions
-class Tempest:
+class Ariel:
 
    def __init__(self,username=False,apikey=False,ident=False,pyrax=False,keyring=False):
 
@@ -341,7 +359,7 @@ class Tempest:
        if obj_type == "server" and args and len(args) == 3:
           self._srv_create(*args)
 
-   def _srv_create(self,name,flavor,image):
+   def _srv_create(self,name=False,flavor=False,image=False,mode=False):
            #console.debug('Add: %(name) %(flavor) %(image)')
            server = self.cslist.servers.create(str(name),flavor,image)
            if server:
@@ -350,40 +368,46 @@ class Tempest:
                console.info( "Admin password: %s" %server.adminPass )
                console.info( "Networks: %s" %server.networks )
 
-   def delete(self,obj_type,uuid):             
-
+   def delete(self,obj_type,uuid=False,mode=False):
        try:
           if obj_type == "server":
-              self._srv_delete(uuid)
+              self._srv_delete(uuid,mode)
+          if obj_type == "image":
+              self._img_delete(uuid,mode)
        except Exception:
            console.error("Unable to delete object with uuid or name: %s" %uuid)
            pass
 
            return
 
-   def clone(self,obj_type,obj,name):
+   def clone(self,obj_type,obj,name,mode=False):
        if obj_type == "server":
-           self._srv_clone(obj,name)
+           self._srv_clone(obj,name,mode)
+       if obj_type == "image":
+           self._img_clone(obj,name,mode)
 
    def _srv_image(self,server,name):
        console.debug('Image: %s' %server)
        image = server.create_image(name)
        return image
 
-   def _srv_clone(self,obj,namelist):
+   def _srv_clone(self,obj,namelist,mode=False):
        server = self.valid("server",obj)
        now  = datetime.datetime.now()
        imagename = server.name + '.' + now.strftime('%Y%m%d%H%M')
        console.debug('Imaging: %s' %obj + 'as %s' %imagename )
        image = self._srv_image(server,imagename) 
-       print image
-       check = self.cslist.images.list(image)
-       print check
-          
-       
-       #console.debug(clone.id)
+       console.info("wating for new server image to become available.")
 
-   def _srv_delete(self,obj):
+   def _img_clone(self,obj,namelist,mode=False):
+       image = self.valid("image",uuid)
+       if image:
+          for name in namelist:
+             console.debug(name)
+             server = self.create('server',name,uuid)
+          
+
+   def _srv_delete(self,obj=False,mode=False):
 
        server = self.valid("server",obj)
        console.debug('Delete: %s' %server)
@@ -395,6 +419,34 @@ class Tempest:
             pass 
 
             return
+   def _img_delete(self,uuid=False,mode=False):
+       image = self.valid("image",uuid)
+       console.debug('Delete: %s' %image)
+       all_imgs = self.cslist.images.list()
+       images = [img for img in all_imgs if hasattr(img, 'server')] 
+       if not images:
+           console.warn ("there are no images to delete.")
+           exit()
+       elif not uuid and mode == 'interactive':
+           img_dict = {}
+           for pos, img in enumerate(images):
+               print "%s: %s" % (pos, img.name)
+               img_dict[str(pos)] = img
+               selection = None
+               while selection not in img_dict:
+                  if selection is not None:
+                      console.warn ( "Invalid choice")
+                      question = "Enter the image number:" 
+                      selection = getanswer(question)
+                      image = img_dict.get(selection)
+                      delete_me = img.id
+       elif not mode and uuid:
+           delete_me=uuid
+       if delete_me:
+           self.cslist.images.delete(delete_me)
+           console.info ("Image with UUID '%s' has been deleted." % delete_me)
+       else:
+           console.error ("Unable to find the image with UUID '%s' in your list of server images." % delete_me)
 
    def valid(self,obj_type,obj):
 
@@ -414,15 +466,18 @@ class Tempest:
         if server.name:
            console.debug('Valid: %s' %server)
            return server
-        
 
-   def imagelist(self):
-        imgs = self.cslist.images.list()
+   def _img_list(self,img_type=False):
+        all_imgs = self.cslist.images.list()
+        if not img_type:
+            imgs = all_imgs
+        else:
+            imgs = [img for img in all_imgs if hasattr(img, img_type)]
         for img in imgs:
             print img.name, " UUID:", img.id
         return
 
-   def flavorlist(self):
+   def _flv_list(self):
         flvs = self.cslist.flavors.list()
         for flv in flvs:
             print "Name:", flv.name
@@ -532,10 +587,14 @@ class Tempest:
 
        return
 
-   def list(self,obj_type=False):
+   def list(self,obj_type=False,list_type=False):
 
        if obj_type  == "server":
            self._srv_list()
+       if obj_type  == "image":
+           self._img_list(list_type)
+       if obj_type  == "flavor":
+           self._flv_list()
 
    def name_to_uuid(self,obj_type,namelist):
        uuidlist=[]
@@ -616,14 +675,14 @@ class Tempest:
                except IOError: pass
 
            if not pyrax.identity.authenticated:
-               console.info("keyring and ident file authentication failed, trying manual authentication.")
-               question = "What is your Rackspace Cloud Account User Name?[x to exit]"
+               console.warn("keyring and ident file authentication failed, trying manual authentication.")
+               question = "What is your Rackspace Cloud Account User Name?"
                answer = getanswer(question)
                username = str (answer)
                pyrax.keyring_auth(username)
 
                if not pyrax.identity.authenticated:
-                   question = "What is your Rackspace Cloud Account API key?[x to exit]"
+                   question = "What is your Rackspace Cloud Account API key?"
                    answer = getanswer(question)
                    apikey = str (answer)
                    try: pyrax.set_credentials(username,apikey)
@@ -654,9 +713,9 @@ def valid_file ( file ):
      return os.path.expanduser(file)
 
 
-def getanswer(question):
+def getanswer(question, apppend=None):
 
-    print question
+    print question + append + '[x to exit]'
     response = raw_input()
     answer = str (response)
     if answer == "x":
@@ -665,7 +724,6 @@ def getanswer(question):
     else:
        return answer
 
-#Caliban - the slave who does all the work
 class Caliban:
 
      def __init__(self,mode=False,prefab=False):
@@ -769,36 +827,31 @@ class Caliban:
          if self.args.object and not self.args.action:
             self.parser.error('--object  requires --action.')
 
-# Prospero the witness to it all and the future
 class Prospero:
   
     def __init__(self,args,defaults):
-       
         if args.debug:
             print args
-        
         if args.username:
             username = args.username
-    
         if args.apikey:
             apikey = args.apikey
-    
         if args.ident:
             ident = args.ident
         else:
             ident = os.path.join(defaults.get('tempest','identpath'),defaults.get('tempest','default_ident')) 
-    
         if args.pyrax:
             pyrax = args.pyrax
         else:
             pyrax = os.path.join(defaults.get('tempest','pyraxpath'),defaults.get('tempest','default_pyrax')) 
     
-     
-        tempest = Tempest(args.username,args.apikey,ident,pyrax,True)
-        if args.debug:
-            tempest.imagelist()
-            tempest.flavorlist()
-        if args.object == "server" and "list" in args.action:
+        # The Tempest the grand illusion spun by Ariel at Prospero's demand 
+        tempest = Ariel(args.username,args.apikey,ident,pyrax,True)
+        #if args.debug:
+            #tempest.list('images')
+            #tempest.list('flavor')
+        # Display lists of objects    
+        if args.object and "list" in args.action:
             tempest.list(args.object)
             return
         if args.uuid:
@@ -859,7 +912,7 @@ class Prospero:
             if uuidlist:
                  for uuid in uuidlist:
                     console.debug( "ACTION: Delete %s" %uuid )
-                    tempest.delete(args.object,uuid)
+                    tempest.delete(args.object,uuid,mode)
     
             if args.debug:
                 tempest.list(args.object)
@@ -878,6 +931,21 @@ class Prospero:
                
             if args.debug:
                 tempest.list(args.object)
+
+        if args.name and args.uuid and args.object == "image" and "clone" in args.action:
+            if args.debug:
+                tempest.list(args.object,'server')
+
+        if  uuidlist and args.object == "image" and "delete" in args.action:
+            if args.debug:
+                tempest.list(args.object,'server')
+
+            for uuid in uuidlist:
+                console.debug( "ACTION: Delete %s" %uuid )
+                tempest.delete(args.object,uuid,mode)
+
+            if args.debug:
+                tempest.list(args.object,'server')
 
         if args.object == 'server' and "show" in args.action and uuidlist:
             for id in uuidlist:
