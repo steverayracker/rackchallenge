@@ -13,6 +13,7 @@ import signal
 import errno
 import warnings
 import keyring
+import traceback
 
 #
 # The Tempest - a Rackspace cloud command and control script using the pyrax bindings to the OpenStack API
@@ -315,7 +316,6 @@ class Miranda:
 class Ariel:
 
    def __init__(self,username=False,apikey=False,ident=False,pyrax=False,keyring=False):
-
        self.username = username
        self.apikey = apikey
        self.ident  = ident
@@ -326,58 +326,56 @@ class Ariel:
        return
 
    def genkeyring ( self, keyname):
-
        print "Creating keyring: %s" %keyname
        print "User Name: %s" %self.username
        print "API Key: %s" %self.apikey
        try: keyring.set_password( str(keyname), str(self.username), str(self.apikey) )
-       except NameError: pass
-
+       except NameError: 
+          pass
        return
 
-   def autoname(self,obj_type,number,autoname):             
-       self.names = []
-       prefix = str(autoname[0])
-       autotype = str(autoname[1])
-       
-       for num in xrange ( 0, int(number) ):   
-           if autotype  == "simple":
-              val = prefix + '.' + str(num+1)
-              self.names.append( val )
-           elif autotype == "date":
-              now  = datetime.datetime.now()
-              datestr = now.strftime('%Y%m%d%H%M')
-              val = prefix + '.' + datestr + '.' + str(num+1)
-              self.names.append( val )
-           else:
-              console.error("Unkown autoname type %s", autotype)
+   def uuid_to_name(self,obj_type,objlist):
+       console.debug('uuid_to_name')
 
-       return self.names
+   def create(self,obj_type,mode=False,**args):             
+       console.debug(mode)
+       console.debug('Object: %s' %obj_type)
+       console.debug('Add: %s' %args )
+       if obj_type == "server" and args:
+          self._srv_create(mode,**args)
 
-   def create(self,obj_type,*args):             
+   def _srv_create(self,mode,id=False,image=False,flavor=False):
+       console.debug(mode)
+       console.debug('Name: %s' %id )
+       console.debug('Flavor: %s' %flavor )
+       console.debug('Image: %s' %image )
+       if mode == 'dry_run':
+           server = False
+       else:
+           try:
+               img = self._img_valid(image)
+               flv= self._flv_valid(flavor)
+               server = self.cslist.servers.create(str(id),img,flv)
+               if server:
+                   console.info( "ID: %s" %str(server.id) )
+                   console.info( "Status: %s" %server.status )
+                   console.info( "Admin password: %s" %server.adminPass )
+                   console.info( "Networks: %s" %server.networks )
+           except novaclient.exceptions.BadRequest as err:
+               console.error(str(err))
+               pass
 
-       if obj_type == "server" and args and len(args) == 3:
-          self._srv_create(*args)
-
-   def _srv_create(self,name=False,flavor=False,image=False,mode=False):
-           #console.debug('Add: %(name) %(flavor) %(image)')
-           server = self.cslist.servers.create(str(name),flavor,image)
-           if server:
-               console.info( "ID: %s" %str(server.id) )
-               console.info( "Status: %s" %server.status )
-               console.info( "Admin password: %s" %server.adminPass )
-               console.info( "Networks: %s" %server.networks )
-
-   def delete(self,obj_type,uuid=False,mode=False):
+   def delete(self,obj_type,mode=False,*args):
+       console.debug(mode)
+       console.debug('Delete: %(obj_type) %(args)')
        try:
           if obj_type == "server":
-              self._srv_delete(uuid,mode)
+              self._srv_delete(mode,*args)
           if obj_type == "image":
-              self._img_delete(uuid,mode)
+              self._img_delete(mode,mode)
        except Exception:
            console.error("Unable to delete object with uuid or name: %s" %uuid)
            pass
-
            return
 
    def clone(self,obj_type,obj,name,mode=False):
@@ -407,19 +405,21 @@ class Ariel:
              server = self.create('server',name,uuid)
           
 
-   def _srv_delete(self,obj=False,mode=False):
-
+   def _srv_delete(self,mode=False,obj=False):
+       console.debug(mode)
        server = self.valid("server",obj)
        console.debug('Delete: %s' %server)
        try:
             console.info ( "ACTION: deleted server with UUID: %s" %obj )
-            server.delete() 
+            if not mode == 'dry_run':
+                server.delete() 
        except Exception:
             console.error("unable to delete UUID: %s" %obj)
             pass 
 
             return
-   def _img_delete(self,uuid=False,mode=False):
+   def _img_delete(self,mode=False,uuid=False):
+       console.debug(mode)
        image = self.valid("image",uuid)
        console.debug('Delete: %s' %image)
        all_imgs = self.cslist.images.list()
@@ -504,14 +504,15 @@ class Ariel:
               print "Image ID: %s" %img.id
         if matchcount > 1:
            console.error ("more than one image match was found. Please, be more specific in your request, e.g. -i 'CentOS 6.0'")
-           return False
+           exit()
         elif not idmatch:
            console.error ( "The image, %s , was not found in the list of available images. Please, check the value and try again." %image )
-           return False
+           exit()
         else:
            return idmatch
 
    def _flv_valid(self,flavor):
+        console.debug('Flavor: %s' %flavor)
         matchcount = 0
         flvs = self.cslist.flavors.list()
         idmatch = False
@@ -521,17 +522,17 @@ class Ariel:
                matchcount += 1
                print "Flavor ID: %s" %flv.id
                print "Flavor RAM: %s" %flv.ram
-            elif flavor == flv.ram:
+            elif str(flavor) == str(flv.ram):
                print "Flavor ID: %s" %flv.id
                print "Flavor RAM: %s" %flv.ram
                matchcount += 1
                idmatch = flv.id
         if matchcount > 1:
             console.error (" More than one flavor match was found. Please, be more specific in your request, e.g. -f 4096 or -f 3")
-            return False
+            exit()
         elif not idmatch:
             console.error ( "ERROR: The flavor, %s , was not found in the list of available flavors. Please, check the value and try again." %flavor)
-            return False
+            exit()
         else:
             return idmatch
 
@@ -697,33 +698,6 @@ class Ariel:
 
                return
 
-def make_dir ( dir ):
-   if not os.path.exists(os.path.expanduser(dir)):
-       try: os.makedirs(dir)
-       except OSError as exception:
-           if exception.errno != errno.EEXIST:
-               raise
-
-
-def valid_file ( file ):
-
-  if not os.path.exists(os.path.expanduser(file)):
-     raise "The file %s does not exist!"%os.path.expanduser(file)
-  else:
-     return os.path.expanduser(file)
-
-
-def getanswer(question, apppend=None):
-
-    print question + append + '[x to exit]'
-    response = raw_input()
-    answer = str (response)
-    if answer == "x":
-       exit()
-
-    else:
-       return answer
-
 class Caliban:
 
      def __init__(self,mode=False,prefab=False):
@@ -761,8 +735,8 @@ class Caliban:
          authgroup.add_argument('--ident', help="use this alternative identity file for pyrax credentials", metavar='<alt. pyrax identity file path>')
          objectgroup = self.parser.add_argument_group('objects', 'options for the --object option')
          objectgroup.add_argument("-O",'--object', help="the type of cloud object, e.g. server", type=str, choices=all_objects, metavar='<object type>')
-         objectgroup.add_argument('--name', help="the name(s) of the cloud object, e.g. for two server objects --name web1 web2", metavar ="<name(s)>", nargs='+', action='append')
-         objectgroup.add_argument('--uuid', help="the UUID(s) of the cloud object", type=str , metavar = "<UUID(s)>" , nargs='+', action='append')
+         objectgroup.add_argument('-N','--name', help="the name(s) of the cloud object, e.g. for two server objects --name web1 web2", metavar ="<name(s)>", nargs='+', action='append')
+         objectgroup.add_argument('-U','--uuid', help="the UUID(s) of the cloud object", type=str , metavar = "<UUID(s)>" , nargs='+', action='append')
          namegroup = self.parser.add_argument_group('names', 'options for the --autoname option used when generating multiple cloud objects of the same type')
          namegroup.add_argument('--autoname', help="automatically generate names when creating multiple objects", nargs=2, metavar='<name prefix> < simple|date >' )
          namegroup.add_argument('-n','--number', help="then number of cloud objects to add", default=1,type=int,  metavar = "<number>")
@@ -829,9 +803,11 @@ class Caliban:
 
 class Prospero:
   
+    # Soliloqy
     def __init__(self,args,defaults):
+
         if args.debug:
-            print args
+            self.debug = args.debug
         if args.username:
             username = args.username
         if args.apikey:
@@ -846,112 +822,179 @@ class Prospero:
             pyrax = os.path.join(defaults.get('tempest','pyraxpath'),defaults.get('tempest','default_pyrax')) 
     
         # The Tempest the grand illusion spun by Ariel at Prospero's demand 
-        tempest = Ariel(args.username,args.apikey,ident,pyrax,True)
-        #if args.debug:
-            #tempest.list('images')
-            #tempest.list('flavor')
-        # Display lists of objects    
-        if args.object and "list" in args.action:
-            tempest.list(args.object)
-            return
+        self.tempest = Ariel(args.username,args.apikey,ident,pyrax,True)
+
+        # Get uuidlist and namelist control objects
+        self.namelist = []
+        self.uuidlist = []
         if args.uuid:
-            uuidlist = args.uuid[0]
-            #console.debug( 'uuidlist: %s' %uuidlist)
+            self.uuidlist = args.uuid[0]
+
         if args.name:
-            namelist = args.name[0] 
-            #console.debug( 'namelist: %s' %namelist)
+            self.namelist = args.name[0] 
+
         if args.autoname and args.number:
-            namelist = tempest.autoname(args.object ,args.number,args.autoname)
+            self.namelist = autoname(args.object ,args.number,args.autoname)
+
         elif args.number >1 and len(namelist) == 1: 
             newauto = [namelist[0], 'simple']
-            namelist = tempest.autoname(args.object ,args.number,newauto)
-    
-        if args.object == "server" and "add" in args.action and namelist:
+            self.namelist = autoname(args.object ,args.number,newauto)
 
-            if not args.image:    
-                image = defaults.get('server','image')
-            elif args.image:
-                image = args.image
-    
-            if tempest.valid('image',image):
-                console.debug('Image: %s' %image)
-            else:
-                console.critical('invalid image %s' %args.image)
-                exit()
-    
-            if not args.flavor:
-                flavor = defaults.get('server','flavor')
-            elif not args.flavor: 
-                flavor = args.flavor
+        if self.debug:
+            console.debug('Args: %s' %args)
+            self.tempest.list('Object: %s' %args.object)
+            self.tempest.list('Action: %s' %args.action)
+            if self.namelist:
+                console.debug('Name(s): %s' %self.namelist)
+            if self.uuidlist:
+                console.debug('UUID(s): %s' %self.uuidlist) 
+        
+        # Set mode for functions
+        mode = False
+        #mode = 'dry_run'
+        if args.interactive:
+            mode = 'interactive'
 
-            if tempest.valid('flavor',flavor):
-                console.debug('Flavor: %s' %flavor)
-            else:
-                console.critical('invalid flavor %s' %args.image)
-                exit()
+        if args.prefabs:
+            mode = 'prefab'
+
+        if args.dryrun:
+            mode = 'dry_run'
+
+        # --action list
+        # Display lists of objects    
+        if args.object and "list" in args.action:
+            self.tempest.list(args.object)
+            #return
+            exit() 
+
+        # --action show
+        if "show" in args.action and self.uuidlist:
+            for uuid in self.uuidlist:
+                self.tempest.show(args.object,uuid)
+            return
              
-            if args.name or args.autoname and image and flavor:
-                #if args.debug:
-                    #tempest.list(args.object)
+        obj_args = False 
+        loop_obj = False 
+        no_args = { } 
+        # --action add
+        if "add" in args.action:
+            # --object server -- action
+            if args.object == "server" and self.namelist:
+                 
+                # Get default --object server --action add required arg values
+                image  = defaults.get('server','image')
+                flavor = defaults.get('server','flavor')
+                net = None
+                #net = defaults.get('net','name')
                 
-                console.debug ( namelist )
-                for val in namelist:
-                    console.debug ( 'Name: %s' %val )
-                    tempest.create(args.object,val,image,flavor)
-        
-                #if args.debug:
-                    #tempest.list(args.object)
-        
-        if args.uuid and args.object == "server" and "delete" in args.action:
-            if args.debug:
-                tempest.list(args.object)
+                #if args.network:
+                    #net = args.network
 
-            #if namelist:
-               #uuidlist = tempest.name_to_uuid('server',namelist)
-               
-            if uuidlist:
-                 for uuid in uuidlist:
-                    console.debug( "ACTION: Delete %s" %uuid )
-                    tempest.delete(args.object,uuid,mode)
-    
-            if args.debug:
-                tempest.list(args.object)
+                if args.image:    
+                    image = args.image
 
-        if args.name and args.uuid and args.object == "server" and "clone" in args.action:
-            if args.debug:
-                tempest.list(args.object)
-            
-            if uuidlist and len(uuidlist) == 1:
-                for uuid in uuidlist:
-                    console.debug( "ACTION: Clone %s" %uuid + ' as %s' %namelist )
-                    tempest.clone(args.object,uuid,namelist)
+                if args.flavor:
+                    flavor = args.flavor
+             
+                if self.namelist and image and flavor:
+                    #obj_args = { image: image, flavor: flavor, network: net } 
+                    obj_args = { 'image': image, 'flavor': flavor } 
+                    loop_obj = self.namelist
+
+
+        # --action delete
+        if "delete" in args.action:
+            if args.object == "server" and self.uuidlist:
+                loop_obj = self.uuidlist
+                obj_args = no_args
+
+        # --action clone
+        if "clone" in args.action:
+            if args.object == "server" and self.namelist and len(self.uuidlist) == 1:
+                loop_obj = self.uuidlist
+                obj_args = { 'namelist': self.namelist }
             else:
-                console.error('Cloning of more than one object is currently not suported.')
+                console.error('Cloning of more than one object UUID, %s , is currently not suported.' %self.uuidlist)
                 return
-               
-            if args.debug:
-                tempest.list(args.object)
-
-        if args.name and args.uuid and args.object == "image" and "clone" in args.action:
-            if args.debug:
-                tempest.list(args.object,'server')
-
-        if  uuidlist and args.object == "image" and "delete" in args.action:
-            if args.debug:
-                tempest.list(args.object,'server')
-
-            for uuid in uuidlist:
-                console.debug( "ACTION: Delete %s" %uuid )
-                tempest.delete(args.object,uuid,mode)
-
-            if args.debug:
-                tempest.list(args.object,'server')
-
-        if args.object == 'server' and "show" in args.action and uuidlist:
-            for id in uuidlist:
-                tempest.show(args.object,id[0])
-    
+                  
+        if loop_obj and obj_args: 
+             self.process(args.action[0],mode,loop_obj,args.object,**obj_args)
         return
+
+    # Epilog   
+    # Function to process objects
+    def process(self,action,mode,loopobj,obj_type,**obj_args):
+        console.debug(mode)
+        console.debug(action)
+        console.debug(obj_type)
+        console.debug(obj_args)
+        if self.debug: 
+            if obj_type == 'image':
+                self.tempest.list(obj_type,'server')
+            else:
+                self.tempest.list(obj_type)
+        for id in loopobj:
+            console.debug( "ACTION: %s" %action + ": %s" %id )
+            if action == 'add':
+                obj_args['id'] = id;
+                self.tempest.create(obj_type,mode,**obj_args)
+            elif action == 'delete':
+                print 
+                #self.tempest.delete(mode,obj_type,item,**obj_args)
+            elif action == 'clone': 
+                print 
+            #tempest.clone(mode,obj_type,item,**obj_args)
+            else:
+                console.error ('ACTION: %s: unimplemented or not valid.' %action)  
+        return
+
+#Global Functions
+
+def make_dir ( dir ):
+    if not os.path.exists(os.path.expanduser(dir)):
+        try: os.makedirs(dir)
+        except OSError as exception:
+            if exception.errno != errno.EEXIST:
+                raise
+
+
+def valid_file ( file ):
+
+    if not os.path.exists(os.path.expanduser(file)):
+        raise "The file %s does not exist!"%os.path.expanduser(file)
+    else:
+        return os.path.expanduser(file)
+
+def getanswer(question, apppend=None):
+
+     print question + append + '[x to exit]'
+     response = raw_input()
+     answer = str (response)
+     if answer == "x":
+         exit()
+     else:
+         return answer
+
+# Function to automatically generate names
+def autoname(self,obj_type,number,autoname):
+    self.names = []
+    prefix = str(autoname[0])
+    autotype = str(autoname[1])
+
+    for num in xrange ( 0, int(number) ):
+        if autotype  == "simple":
+            val = prefix + '.' + str(num+1)
+            self.names.append( val )
+        elif autotype == "date":
+            now  = datetime.datetime.now()
+            datestr = now.strftime('%Y%m%d%H%M')
+            val = prefix + '.' + datestr + '.' + str(num+1)
+            self.names.append( val )
+        else:
+            console.error("unkown autoname type %s", autotype)
+    return self.names
+
 # Logging
 log.basicConfig(level=log.DEBUG,
                     format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
@@ -970,41 +1013,38 @@ chandler.setLevel(log.INFO)
 logger.addHandler(chandler)
 
 def main():
+
     configfile = default_config
     base = default_base
-    sections = default_sections
-    console.debug(sections)
-    defaults  = Miranda( sections ,base,configfile)
+    defaults  = Miranda( default_sections ,base,configfile)
     arguments = Caliban(defaults)
     defaults.load()
     args = arguments.get()
+
     if args.interactive or not args:
         interactive  = Caliban("interactive")
         args = interactive.get()
         print args.number
         exit()
 
-    #if args.debug:
-       #arguments.show()
-       #prefab.show()
-
     if args.setup == "defaults":
-        defaults  = Miranda( sections,default_base,default_config,args.setup)
+        defaults  = Miranda( default_sections,default_base,default_config,args.setup)
         default_args = Caliban(defaults)
         defaults.save()
         defaults.load()
         defaults.show()
 
     if args.config:
-       configifile = args.config
-       base = os.path.basename(configfile)
-       defaults = Miranda( sections ,base,configfile)
-       arguments = Caliban(configfile)
-       args = arguments.get()
-       prefab.load()
-       if args.debug:
-           arguments.show()
-           defaults.show()
+        configfile = args.config
+        base = os.path.basename(configfile)
+        defaults = Miranda( default_sections ,base,configfile)
+        arguments = Caliban(configfile)
+        args = arguments.get()
+        defaults.load()
+        if args.debug:
+            arguments.show()
+            defaults.show()
+
     configpath = os.path.join ( os.path.expanduser(base) , configfile)
     console.info ("Config File: %s" %configpath)
 
@@ -1028,9 +1068,9 @@ def main():
     return
 
 if __name__ == "__main__":
-
+    
     try:
-       main()
+        main()
     except KeyboardInterrupt:
-       pass
+        pass
 
