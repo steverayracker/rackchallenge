@@ -39,6 +39,7 @@ global logfile
 # Defaults
 default_base = os.path.expanduser("~/.tempest")
 default_pyrax = os.path.expanduser("~/.pyrax.cfg")
+default_nets = {'public': True, 'private': True}
 default_config = 'tempest_defaults.cfg'
 default_html = "<html>Default %s index.html</html>" %__file__
 logfile = os.path.join(default_base,'logs','tempest.log')
@@ -46,7 +47,7 @@ prefab_lilst = os.path.join(default_base,'prefabs','prefab.lst')
 default_sections = ["tempest","server","dns","files","db","lb",'net','cbs']
 
 tempest_objects=['config','auth','prefab']
-cloud_objects=['server','image','flavor','dns','cloudfiles','cdn','clouddb','db','dbauth','cloudlb','lbnode','ssl','cbs','snap']
+cloud_objects=['server','image','flavor','dns','cloudfiles','cdn','clouddb','db','dbauth','cloudlb','lbnode','ssl','cbs','snap','net']
 common_actions=['list', 'show','add', 'delete', 'rename', 'edit', 'clone','on','off']
 prefab_actions=['run']
 server_actions=['resize', 'revert', 'confirm','reboot']
@@ -244,7 +245,7 @@ class Miranda:
             self.prefab[str(section)]['description'] = 'Cloud Server Defaults'
             self.prefab[str(section)]['image'] = '8a3a9f96-b997-46fd-b7a8-a9e740796ffd'
             self.prefab[str(section)]['flavor'] = 2
-            self.prefab[str(section)]['srvprefix'] = 'rax'
+            self.prefab[str(section)]['srvprefix'] = 'tempest'
 
             return
 
@@ -252,7 +253,7 @@ class Miranda:
 
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud DNS Defaults'
-            self.prefab[str(section)]['zone'] = 'example.com'
+            self.prefab[str(section)]['zone'] = 'tempest.example.com'
             self.prefab[str(section)]['record'] = 'A'
             self.prefab[str(section)]['TTL'] = 300
             self.prefab[str(section)]['email'] = 'webmaster@%s' %self.prefab[str(section)]['zone']
@@ -265,7 +266,7 @@ class Miranda:
             html = open(os.path.join(self.uploadpath,"index.htm") , 'wb')
             html .write(default_html)
             self.prefab[str(section)]['description'] = 'Cloud Files Defaults'
-            self.prefab[str(section)]['container'] = 'cloudfiles1'
+            self.prefab[str(section)]['container'] = 'tempest'
             self.prefab[str(section)]['cdn'] = 'False'
             self.prefab[str(section)]['uploadpath'] = self.uploadpath
             self.prefab[str(section)]['upload'] = 'index.htm'
@@ -278,7 +279,7 @@ class Miranda:
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud Databases Defaults'
             self.prefab[str(section)]['dbtype'] = 'MySQL'
-            self.prefab[str(section)]['dbprefix'] = 'raxdb'
+            self.prefab[str(section)]['dbprefix'] = 'tempestdb'
             self.prefab[str(section)]['flavor'] = 2
             self.prefab[str(section)]['volume'] = 2
 
@@ -290,17 +291,17 @@ class Miranda:
             self.prefab[str(section)]['description'] = 'Cloud LoadBalancer Defaults'
             self.prefab[str(section)]['port'] =80
             self.prefab[str(section)]['algorithm'] = 'least connections'
-            self.prefab[str(section)]['lbprefix'] = 'raxlb'
+            self.prefab[str(section)]['lbprefix'] = 'tempestlb'
 
             return
 
     def _cbs(self,section):
-        
+
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud Block Storage Defaults'
             self.prefab[str(section)]['datastore'] = 'cloudstore'
             self.prefab[str(section)]['type'] = 1
-            self.prefab[str(section)]['bsprefix'] = 'raxcbs'
+            self.prefab[str(section)]['bsprefix'] = 'tempestcbs'
 
             return
 
@@ -308,8 +309,8 @@ class Miranda:
 
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud Networks Defaults'
-            self.prefab[str(section)]['network'] = 'raxnet1'
-            self.prefab[str(section)]['netprefix'] = 'raxnet'
+            self.prefab[str(section)]['networks'] = ""
+            self.prefab[str(section)]['netprefix'] = 'tempestnet'
 
             return
 
@@ -337,14 +338,14 @@ class Ariel:
    def uuid_to_name(self,obj_type,objlist):
        console.debug('uuid_to_name')
 
-   def create(self,obj_type,mode=False,**args):             
+   def create(self,obj_type,mode=False,**kwargs):             
        console.debug(mode)
        console.debug('Object: %s' %obj_type)
        console.debug('Add: %s' %args )
        if obj_type == "server" and args:
-          self._srv_create(mode,**args)
+          self._srv_create(mode,**kwargs)
 
-   def _srv_create(self,mode,id=False,image=False,flavor=False):
+   def _srv_create(self,mode,id,image,flavor,net):
        console.debug(mode)
        console.debug('Name: %s' %id )
        console.debug('Flavor: %s' %flavor )
@@ -355,7 +356,10 @@ class Ariel:
            try:
                img = self._img_valid(image)
                flv= self._flv_valid(flavor)
-               server = self.cslist.servers.create(str(id),img,flv)
+               if net:
+                   server = self.cslist.servers.create(str(id),img,flv,net)
+               else:
+                   server = self.cslist.servers.create(str(id),img,flv)
                if server:
                    console.info( "ID: %s" %str(server.id) )
                    console.info( "Status: %s" %server.status )
@@ -365,32 +369,34 @@ class Ariel:
                console.error(str(err))
                pass
 
-   def delete(self,obj_type,mode=False,*args):
+   def delete(self,obj_type,mode=False,**kwargs):
        console.debug(mode)
        console.debug('Delete: %(obj_type) %(args)')
        try:
           if obj_type == "server":
-              self._srv_delete(mode,*args)
+              self._srv_delete(mode,**kwargs)
           if obj_type == "image":
-              self._img_delete(mode,mode)
+              self._img_delete(mode,**kwargs)
        except Exception:
            console.error("Unable to delete object with uuid or name: %s" %uuid)
            pass
            return
 
-   def clone(self,obj_type,obj,name,mode=False):
+   def clone(self,obj_type,mode=False,**kwargs):
        if obj_type == "server":
-           self._srv_clone(obj,name,mode)
+           self._srv_clone(mode,**kwargs)
        if obj_type == "image":
-           self._img_clone(obj,name,mode)
+           self._img_clone(mode,**kwargs)
 
    def _srv_image(self,server,name):
        console.debug('Image: %s' %server)
        image = server.create_image(name)
        return image
 
-   def _srv_clone(self,obj,namelist,mode=False):
-       server = self.valid("server",obj)
+   def _srv_clone(self,obj,mode,namelist):
+       debug.console(mode)
+       debug.console('Name list: %s' %namelist)
+       server = self._srv_valid(obj)
        now  = datetime.datetime.now()
        imagename = server.name + '.' + now.strftime('%Y%m%d%H%M')
        console.debug('Imaging: %s' %obj + 'as %s' %imagename )
@@ -403,22 +409,22 @@ class Ariel:
           for name in namelist:
              console.debug(name)
              server = self.create('server',name,uuid)
-          
 
-   def _srv_delete(self,mode=False,obj=False):
+
+   def _srv_delete(self,mode,uuid):
        console.debug(mode)
-       server = self.valid("server",obj)
+       server = self._srv_valid(uuid)
        console.debug('Delete: %s' %server)
        try:
-            console.info ( "ACTION: deleted server with UUID: %s" %obj )
+            console.info ( "ACTION: deleted server with UUID: %s" %uuid )
             if not mode == 'dry_run':
-                server.delete() 
+                server.delete()
        except Exception:
-            console.error("unable to delete UUID: %s" %obj)
-            pass 
-
+            console.error("unable to delete UUID: %s" %uuid)
+            pass
             return
-   def _img_delete(self,mode=False,uuid=False):
+
+   def _img_delete(self,mode,uuid):
        console.debug(mode)
        image = self.valid("image",uuid)
        console.debug('Delete: %s' %image)
@@ -476,6 +482,10 @@ class Ariel:
         for img in imgs:
             print img.name, " UUID:", img.id
         return
+
+  
+   def _net_list(self,net_type=False):
+        self.net.list()
 
    def _flv_list(self):
         flvs = self.cslist.flavors.list()
@@ -765,7 +775,8 @@ class Caliban:
          bsgroup  = self.parser.add_argument_group('--object datastore', 'options for --object datastore')
          bsgroup.add_argument('--type', help="storage type", metavar = '<SATA|SSD>' , choices = ['sata','SATA','ssd','SSD'])
          netgroup  = self.parser.add_argument_group('--object network', 'options for --object network')
-         netgroup.add_argument('--net', help="add this cloud object to the specified cloud server network(s) this cloud object" ,metavar = '<cloud network(s)>', nargs='+', action='append') 
+         netgroup.add_argument('--net', help="add this cloud object to the specified cloud server network(s) this cloud object" ,metavar = '<cloud network(s)>', nargs='+', action='append' ) 
+         bsgroup.add_argument('--cidr', help="cidr of Cloud Network, e.g. 192.168.111.0/24", metavar = '<cidr>')
          actiongroup  = self.parser.add_argument_group('actions', 'options for the --object <object> --action  option')
          actiongroup.add_argument('-A','--action', nargs=1, choices=all_actions, help="action to be taken on cloud object or tempest script object") 
 
@@ -824,14 +835,21 @@ class Prospero:
         # The Tempest the grand illusion spun by Ariel at Prospero's demand 
         self.tempest = Ariel(args.username,args.apikey,ident,pyrax,True)
 
-        # Get uuidlist and namelist control objects
+        # Get uuidlist,namelist and netlist control objects
         self.namelist = []
         self.uuidlist = []
+        self.netlist = {}
         if args.uuid:
             self.uuidlist = args.uuid[0]
 
         if args.name:
             self.namelist = args.name[0] 
+
+        if args.net:
+            self.netlist['networks'] = args.net[0] 
+            if len(self.netlist) > 10:
+                console.error('accounts have a limit of 10 Cloud Networks, please, try again')
+                exit()
 
         if args.autoname and args.number:
             self.namelist = autoname(args.object ,args.number,args.autoname)
@@ -848,7 +866,9 @@ class Prospero:
                 console.debug('Name(s): %s' %self.namelist)
             if self.uuidlist:
                 console.debug('UUID(s): %s' %self.uuidlist) 
-        
+            if self.netlist:
+                console.debug('Networks(s): %s' %self.netlist) 
+
         # Set mode for functions
         mode = False
         #mode = 'dry_run'
@@ -869,11 +889,18 @@ class Prospero:
             exit() 
 
         # --action show
-        if "show" in args.action and self.uuidlist:
-            for uuid in self.uuidlist:
-                self.tempest.show(args.object,uuid)
-            return
-             
+        if args.object and "show" in args.action:
+            if self.uuidlist:
+                for uuid in self.uuidlist:
+                    self.tempest.show(args.object,uuid)
+                return
+            elif self.namelist:
+                for name in self.namelist:
+                    self.tempest.show(args.object,name)
+            else:
+                console.error('you must provide the UUID or name of the object you want to show.')
+                exit()
+
         obj_args = False 
         loop_obj = False 
         no_args = { } 
@@ -881,29 +908,28 @@ class Prospero:
         if "add" in args.action:
             # --object server -- action
             if args.object == "server" and self.namelist:
-                 
+
                 # Get default --object server --action add required arg values
                 image  = defaults.get('server','image')
                 flavor = defaults.get('server','flavor')
-                net = None
-                #net = defaults.get('net','name')
-                
-                #if args.network:
-                    #net = args.network
 
                 if args.image:    
                     image = args.image
 
                 if args.flavor:
                     flavor = args.flavor
-             
-                if self.namelist and image and flavor:
-                    #obj_args = { image: image, flavor: flavor, network: net } 
-                    obj_args = { 'image': image, 'flavor': flavor } 
+
+                if self.namelist and image and flavor and netlist:
+                    srv_args = { 'image': image, 'flavor': flavor, 'netlist': netlist } 
                     loop_obj = self.namelist
 
+                if self.netlist:
+                    #join the netlist to the argument list
+                    obj_args = dict(srv_args.items() + self.netlist.items())
+                else: 
+                    obj_args = srv_args
 
-        # --action delete
+        # --action de lete
         if "delete" in args.action:
             if args.object == "server" and self.uuidlist:
                 loop_obj = self.uuidlist
@@ -917,7 +943,7 @@ class Prospero:
             else:
                 console.error('Cloning of more than one object UUID, %s , is currently not suported.' %self.uuidlist)
                 return
-                  
+
         if loop_obj and obj_args: 
              self.process(args.action[0],mode,loop_obj,args.object,**obj_args)
         return
@@ -957,7 +983,6 @@ def make_dir ( dir ):
         except OSError as exception:
             if exception.errno != errno.EEXIST:
                 raise
-
 
 def valid_file ( file ):
 
@@ -1033,6 +1058,7 @@ def main():
         defaults.save()
         defaults.load()
         defaults.show()
+        exit()
 
     if args.config:
         configfile = args.config
@@ -1046,7 +1072,6 @@ def main():
             defaults.show()
 
     configpath = os.path.join ( os.path.expanduser(base) , configfile)
-    console.info ("Config File: %s" %configpath)
 
     if args.quiet:
         fhandler.setLevel(log.INFO)
@@ -1056,8 +1081,14 @@ def main():
         fhandler.setLevel(log.DEBUG)
         chandler.setLevel(log.DEBUG)
 
-    console.info("Verbose: True")
-    console.info ("Log File: %s" %logfile)
+    if not args.quiet:
+        console.info ("Verbose: True")
+        if args.debug:
+            console.info ("Debug: True")
+        if args.dryrun:
+            console.info ("Dry Run: True")
+        console.info("Config File: %s" %configpath)
+        console.info ("Log File: %s" %logfile)
 
 
     console.debug ( "name(s): %s" %args.name)
