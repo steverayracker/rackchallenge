@@ -36,10 +36,74 @@ import traceback
 
 # Globals
 global logfile
+
+# Global Logging
+log.basicConfig(level=log.DEBUG,
+                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+                    datefmt='%m-%d %H:%M',
+                    filename=logfile,
+                    filemode='w')
+logger = log.getLogger("tempest")
+console = logger
+fhandler = log.FileHandler( logfile )
+fhandler.setLevel(log.DEBUG)
+logger.addHandler(fhandler)
+chandler = log.StreamHandler()
+cformat = log.Formatter('%(levelname)-2s %(message)s')
+chandler.setFormatter(cformat)
+chandler.setLevel(log.INFO)
+logger.addHandler(chandler)
+
+#Global Functions
+
+def make_dir ( dir ):
+    if not os.path.exists(os.path.expanduser(dir)):
+        try: os.makedirs(dir)
+        except OSError as exception:
+            if exception.errno != errno.EEXIST:
+                raise
+
+def valid_file ( file ):
+
+    if not os.path.exists(os.path.expanduser(file)):
+        raise "The file %s does not exist!"%os.path.expanduser(file)
+    else:
+        return os.path.expanduser(file)
+
+def getanswer(question, apppend=None):
+
+     print question + append + '[x to exit]'
+     response = raw_input()
+     answer = str (response)
+     if answer == "x":
+         exit()
+     else:
+         return answer
+
+# Function to automatically generate names
+def autoname(self,obj_type,number,autoname):
+    self.names = []
+    prefix = str(autoname[0])
+    autotype = str(autoname[1])
+
+    for num in xrange ( 0, int(number) ):
+        if autotype  == "simple":
+            val = prefix + '.' + str(num+1)
+            self.names.append( val )
+        elif autotype == "date":
+            now  = datetime.datetime.now()
+            datestr = now.strftime('%Y%m%d%H%M')
+            val = prefix + '.' + datestr + '.' + str(num+1)
+            self.names.append( val )
+        else:
+            console.error("unkown autoname type %s", autotype)
+    return self.names
+
+
 # Defaults
 default_base = os.path.expanduser("~/.tempest")
 default_pyrax = os.path.expanduser("~/.pyrax.cfg")
-default_nets = {'public': True, 'private': True}
+default_networks = {'public': True, 'private': True}
 default_config = 'tempest_defaults.cfg'
 default_html = "<html>Default %s index.html</html>" %__file__
 logfile = os.path.join(default_base,'logs','tempest.log')
@@ -356,8 +420,13 @@ class Ariel:
            try:
                img = self._img_valid(image)
                flv= self._flv_valid(flavor)
-               if net:
-                   server = self.cslist.servers.create(str(id),img,flv,net)
+               if not net == default_networks:
+                   networks = net['networks']
+                   add_nets = {}
+                   for net in networks:
+                       if self._valid_net(net) as valid_net:
+                          add_netis["u'%s'" %net] = valid_net
+                       server = self.cslist.servers.create(str(id),img,flv,add_nets)
                else:
                    server = self.cslist.servers.create(str(id),img,flv)
                if server:
@@ -718,7 +787,6 @@ class Caliban:
               self.interactive()
          elif mode == "prefab":
               self.prefab(prefab)
-       
 
      def interactive(self):
 
@@ -775,7 +843,8 @@ class Caliban:
          bsgroup  = self.parser.add_argument_group('--object datastore', 'options for --object datastore')
          bsgroup.add_argument('--type', help="storage type", metavar = '<SATA|SSD>' , choices = ['sata','SATA','ssd','SSD'])
          netgroup  = self.parser.add_argument_group('--object network', 'options for --object network')
-         netgroup.add_argument('--net', help="add this cloud object to the specified cloud server network(s) this cloud object" ,metavar = '<cloud network(s)>', nargs='+', action='append' ) 
+         netgroup.add_argument('--net', help="add this cloud object to the specified cloud network(s), e.g. --net nopublic mynet == disable the public Internet, the private Rackspace internal net and your Cloud Network nameed mynet. Reserved Keywords:\n nopublic disable the public Internet\n noprivate disable the Rackspace private newtork\nNOTE: the public and private networks are enabled by default." ,metavar = '<cloud network(s)>', nargs='+', action='append' ) 
+
          bsgroup.add_argument('--cidr', help="cidr of Cloud Network, e.g. 192.168.111.0/24", metavar = '<cidr>')
          actiongroup  = self.parser.add_argument_group('actions', 'options for the --object <object> --action  option')
          actiongroup.add_argument('-A','--action', nargs=1, choices=all_actions, help="action to be taken on cloud object or tempest script object") 
@@ -812,7 +881,10 @@ class Caliban:
          if self.args.object and not self.args.action:
             self.parser.error('--object  requires --action.')
 
+# --- End Caliban ---
+
 class Prospero:
+
   
     # Soliloqy
     def __init__(self,args,defaults):
@@ -838,7 +910,7 @@ class Prospero:
         # Get uuidlist,namelist and netlist control objects
         self.namelist = []
         self.uuidlist = []
-        self.netlist = {}
+        self.netlist = default_networks
         if args.uuid:
             self.uuidlist = args.uuid[0]
 
@@ -846,10 +918,18 @@ class Prospero:
             self.namelist = args.name[0] 
 
         if args.net:
-            self.netlist['networks'] = args.net[0] 
-            if len(self.netlist) > 10:
+            netlist = args.net[0] 
+            for network in netlist:
+               if network == 'nopublic':
+                  self.netlist['public'] = False
+               if network == 'noprivate':
+                  self.netlist['private'] = False
+            netlist[:] = [net for net in netlist if net != 'nopublic' and net !='noprivate' ]
+            if len(netlist) > 10:
                 console.error('accounts have a limit of 10 Cloud Networks, please, try again')
                 exit()
+            else:
+                self.netlist['networks'] = netlist
 
         if args.autoname and args.number:
             self.namelist = autoname(args.object ,args.number,args.autoname)
@@ -974,68 +1054,7 @@ class Prospero:
             else:
                 console.error ('ACTION: %s: unimplemented or not valid.' %action)  
         return
-
-#Global Functions
-
-def make_dir ( dir ):
-    if not os.path.exists(os.path.expanduser(dir)):
-        try: os.makedirs(dir)
-        except OSError as exception:
-            if exception.errno != errno.EEXIST:
-                raise
-
-def valid_file ( file ):
-
-    if not os.path.exists(os.path.expanduser(file)):
-        raise "The file %s does not exist!"%os.path.expanduser(file)
-    else:
-        return os.path.expanduser(file)
-
-def getanswer(question, apppend=None):
-
-     print question + append + '[x to exit]'
-     response = raw_input()
-     answer = str (response)
-     if answer == "x":
-         exit()
-     else:
-         return answer
-
-# Function to automatically generate names
-def autoname(self,obj_type,number,autoname):
-    self.names = []
-    prefix = str(autoname[0])
-    autotype = str(autoname[1])
-
-    for num in xrange ( 0, int(number) ):
-        if autotype  == "simple":
-            val = prefix + '.' + str(num+1)
-            self.names.append( val )
-        elif autotype == "date":
-            now  = datetime.datetime.now()
-            datestr = now.strftime('%Y%m%d%H%M')
-            val = prefix + '.' + datestr + '.' + str(num+1)
-            self.names.append( val )
-        else:
-            console.error("unkown autoname type %s", autotype)
-    return self.names
-
-# Logging
-log.basicConfig(level=log.DEBUG,
-                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
-                    datefmt='%m-%d %H:%M',
-                    filename=logfile,
-                    filemode='w')
-logger = log.getLogger("tempest")
-console = logger
-fhandler = log.FileHandler( logfile )
-fhandler.setLevel(log.DEBUG)
-logger.addHandler(fhandler)
-chandler = log.StreamHandler()
-cformat = log.Formatter('%(levelname)-2s %(message)s')
-chandler.setFormatter(cformat)
-chandler.setLevel(log.INFO)
-logger.addHandler(chandler)
+# --- End Prospero ---
 
 def main():
 
