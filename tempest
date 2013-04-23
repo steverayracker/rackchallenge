@@ -13,6 +13,7 @@ import signal
 import errno
 import warnings
 import keyring
+import time
 import traceback
 
 #
@@ -129,8 +130,8 @@ all_actions = common_actions + prefab_actions + server_actions  + files_actions 
 warnings.filterwarnings(
     'ignore',
     message='BaseException.message has been deprecated as of Python 2.6',
-    category=DeprecationWarning,
-    module='argparse')
+    category=DeprecationWarning) #,
+    #module='argparse')
 
 #Error Handling
 import novaclient
@@ -240,7 +241,7 @@ class Miranda:
 
         if os.path.exists(self.filepath):
             os.rename( self.filepath , backup )
-         
+
         os.rename( tmpfile , self.filepath )
 
         return
@@ -402,14 +403,14 @@ class Ariel:
    def uuid_to_name(self,obj_type,objlist):
        console.debug('uuid_to_name')
 
-   def create(self,obj_type,mode=False,**kwargs):             
+   def create(self,obj_type,mode=False,**kwargs):
        console.debug(mode)
        console.debug('Object: %s' %obj_type)
        console.debug('Add: %s' %args )
        if obj_type == "server" and args:
           self._srv_create(mode,**kwargs)
 
-   def _srv_create(self,mode,id,image,flavor,net):
+   def _srv_create(self,mode,id,image,flavor,net=False):
        console.debug(mode)
        console.debug('Name: %s' %id )
        console.debug('Flavor: %s' %flavor )
@@ -420,13 +421,16 @@ class Ariel:
            try:
                img = self._img_valid(image)
                flv= self._flv_valid(flavor)
-               if not net == default_networks:
-                   networks = net['networks']
-                   add_nets = {}
-                   for net in networks:
-                       if self._valid_net(net) as valid_net:
-                          add_netis["u'%s'" %net] = valid_net
-                       server = self.cslist.servers.create(str(id),img,flv,add_nets)
+               if id and net and flv and img:
+                   server = self.cslist.servers.create(str(id),img,flv,net)
+               elif id and flv and img:
+                   if not net == default_networks:
+                       networks = net['networks']
+                       add_nets = {}
+                   for network in networks:
+                       if self._valid_net(network):
+                           add_nets["u'%s'" %network] = network
+                           server = self.cslist.servers.create(str(id),img,flv,add_nets)
                else:
                    server = self.cslist.servers.create(str(id),img,flv)
                if server:
@@ -440,88 +444,115 @@ class Ariel:
 
    def delete(self,obj_type,mode=False,**kwargs):
        console.debug(mode)
-       console.debug('Delete: %(obj_type) %(args)')
+       console.debug('Delete: %s' %obj_type)
        try:
           if obj_type == "server":
               self._srv_delete(mode,**kwargs)
-          if obj_type == "image":
+          elif obj_type == "image":
               self._img_delete(mode,**kwargs)
        except Exception:
-           console.error("Unable to delete object with uuid or name: %s" %uuid)
+           console.error("Unable to delete: %s" %obj_type)
            pass
            return
 
-   def clone(self,obj_type,mode=False,**kwargs):
+   def clone(self,obj_type,obj,mode=False,**kwargs):
        if obj_type == "server":
-           self._srv_clone(mode,**kwargs)
+           self._srv_clone(obj,mode,**kwargs)
        if obj_type == "image":
-           self._img_clone(mode,**kwargs)
+           self._img_clone(obj,mode,**kwargs)
 
-   def _srv_image(self,server,name):
+   def _srv_image(self,mode,server,name):
        console.debug('Image: %s' %server)
        image = server.create_image(name)
        return image
 
-   def _srv_clone(self,obj,mode,namelist):
-       debug.console(mode)
-       debug.console('Name list: %s' %namelist)
-       server = self._srv_valid(obj)
+   def _srv_clone(self,mode,obj,namelist):
+       console.debug(mode)
+       console.debug(obj[0])
+       console.debug('Name list: %s' %namelist)
+       server = self._srv_valid(obj[0])
        now  = datetime.datetime.now()
+       flavor = server.flavor.get('id')
        imagename = server.name + '.' + now.strftime('%Y%m%d%H%M')
        console.debug('Imaging: %s' %obj + 'as %s' %imagename )
-       image = self._srv_image(server,imagename) 
        console.info("wating for new server image to become available.")
-
-   def _img_clone(self,obj,namelist,mode=False):
-       image = self.valid("image",uuid)
-       if image:
+       if mode != 'dry_run':
+           image = self._srv_image(mode,server,imagename) 
+           #pyrax.utils.wait_until(image, "status", ['ACTIVE', 'ERROR'], callback= self._img_clone(mode,namelist,img_ready,flavor, interval=60, attempts=10)i
+           lcount = 0
+           while True:
+               print lcount
+               try:
+                  if clone or lcount == 1:
+                      print 'BREAK'
+                      break
+                  else:
+                      lcount +=1
+                      clone = self._img_clone(mode,namelist,img_ready,flavor)                     
+               except Exception:
+                  pass
+                  time.sleep(60)
+       return
+   def _img_clone(self,mode,namelist,image,flavor):
+       img = self._img_valid(image)
+       flv = self._flv_valid(flavor)
+       if img and flv:
           for name in namelist:
              console.debug(name)
-             server = self.create('server',name,uuid)
+             server = self._srv_create(mode,name,img,flv)
 
 
-   def _srv_delete(self,mode,uuid):
+   def _srv_delete(self,mode,uuidlist):
        console.debug(mode)
-       server = self._srv_valid(uuid)
-       console.debug('Delete: %s' %server)
-       try:
-            console.info ( "ACTION: deleted server with UUID: %s" %uuid )
-            if not mode == 'dry_run':
-                server.delete()
-       except Exception:
-            console.error("unable to delete UUID: %s" %uuid)
-            pass
-            return
+       for uuid in uuidlist:
+           console.debug('UUID: %s' %uuid)
+           server = self._srv_valid(uuid)
+           console.debug('Delete: %s' %server)
+           try:
+               console.info ( "ACTION: deleted server with UUID: %s" %uuid )
+               if not mode == 'dry_run':
+                   server.delete()
+           except Exception:
+               console.error("unable to delete UUID: %s" %uuid)
+               pass
 
-   def _img_delete(self,mode,uuid):
+   def _img_delete(self,mode,uuidlist):
        console.debug(mode)
-       image = self.valid("image",uuid)
-       console.debug('Delete: %s' %image)
+       console.debug(uuidlist)
        all_imgs = self.cslist.images.list()
        images = [img for img in all_imgs if hasattr(img, 'server')] 
        if not images:
            console.warn ("there are no images to delete.")
            exit()
-       elif not uuid and mode == 'interactive':
-           img_dict = {}
-           for pos, img in enumerate(images):
-               print "%s: %s" % (pos, img.name)
-               img_dict[str(pos)] = img
-               selection = None
-               while selection not in img_dict:
-                  if selection is not None:
-                      console.warn ( "Invalid choice")
-                      question = "Enter the image number:" 
-                      selection = getanswer(question)
-                      image = img_dict.get(selection)
-                      delete_me = img.id
-       elif not mode and uuid:
-           delete_me=uuid
-       if delete_me:
-           self.cslist.images.delete(delete_me)
-           console.info ("Image with UUID '%s' has been deleted." % delete_me)
-       else:
-           console.error ("Unable to find the image with UUID '%s' in your list of server images." % delete_me)
+       for uuid in uuidlist:
+           console.debug('UUID: %s' %uuid)
+           image = self.valid("image",uuid)
+           console.debug('Delete: %s' %image)
+           if not image and mode == 'interactive':
+               img_dict = {}
+               for pos, img in enumerate(images):
+                   print "%s: %s" % (pos, img.name)
+                   img_dict[str(pos)] = img
+                   selection = None
+                   while selection not in img_dict:
+                       if selection is not None:
+                            console.warn ( "Invalid choice")
+                            question = "Enter the image number:" 
+                            selection = getanswer(question)
+                            image = img_dict.get(selection)
+                            delete_me = img.id
+           elif image:
+              delete_me=uuid
+           console.debug(delete_me)
+           if delete_me:
+              console.info ("Image with UUID '%s' has been deleted." % delete_me)
+              if mode != 'dry_run':
+                  try:
+                      self.cslist.images.delete(delete_me)
+                  except Exception:
+                      console.error("unable to delete UUID: %s" %uuid)
+           else:
+               console.error ("Unable to find the image with UUID '%s' in your list of server images." % delete_me)
 
    def valid(self,obj_type,obj):
 
@@ -541,6 +572,7 @@ class Ariel:
         if server.name:
            console.debug('Valid: %s' %server)
            return server
+
 
    def _img_list(self,img_type=False):
         all_imgs = self.cslist.images.list()
@@ -574,13 +606,13 @@ class Ariel:
            if image in img.name:
               idmatch = img.id
               matchcount += 1
-              print "Image Name: %s" %img.name
-              print "Image ID: %s" %img.id
+              #print "Image Name: %s" %img.name
+              #print "Image ID: %s" %img.id
            elif image in img.id:
               idmatch = img.id
               matchcount += 1
-              print "Image Name: %s" %img.name
-              print "Image ID: %s" %img.id
+              #print "Image Name: %s" %img.name
+              #print "Image ID: %s" %img.id
         if matchcount > 1:
            console.error ("more than one image match was found. Please, be more specific in your request, e.g. -i 'CentOS 6.0'")
            exit()
@@ -696,7 +728,7 @@ class Ariel:
                       console.critical('more than one match in the list of names, %s, please check and retry.' %namelist)
                       exit()
        return uuidlist
-                    
+
    def _srv_list(self,status=False):
        active = False
        servers = self.cslist.servers.list()
@@ -710,8 +742,8 @@ class Ariel:
                    self.show('server',active)
        else:
            console.warning("there are no active servers in your account.")
-          
-   
+
+
    def _files_show(self):
        print self.cfiles.get_account_metadata()
        print list_containers_info()
@@ -885,7 +917,6 @@ class Caliban:
 
 class Prospero:
 
-  
     # Soliloqy
     def __init__(self,args,defaults):
 
@@ -903,7 +934,7 @@ class Prospero:
             pyrax = args.pyrax
         else:
             pyrax = os.path.join(defaults.get('tempest','pyraxpath'),defaults.get('tempest','default_pyrax')) 
-    
+
         # The Tempest the grand illusion spun by Ariel at Prospero's demand 
         self.tempest = Ariel(args.username,args.apikey,ident,pyrax,True)
 
@@ -1009,50 +1040,57 @@ class Prospero:
                 else: 
                     obj_args = srv_args
 
-        # --action de lete
+        # --action delete
         if "delete" in args.action:
-            if args.object == "server" and self.uuidlist:
+
+            if args.object == "server" or "image" and self.uuidlist:
                 loop_obj = self.uuidlist
-                obj_args = no_args
+                obj_args ={ 'uuidlist': loop_obj }
 
         # --action clone
         if "clone" in args.action:
             if args.object == "server" and self.namelist and len(self.uuidlist) == 1:
                 loop_obj = self.uuidlist
+                console.debug(loop_obj)
                 obj_args = { 'namelist': self.namelist }
+            elif len(self.uuidlist) < 1:
+                console.critical('Cloning requires you to specify one server or image UUID to clone.')
             else:
-                console.error('Cloning of more than one object UUID, %s , is currently not suported.' %self.uuidlist)
+                console.critical('Cloning of more than one object UUID, %s , is currently not suported.' %self.uuidlist)
                 return
 
-        if loop_obj and obj_args: 
-             self.process(args.action[0],mode,loop_obj,args.object,**obj_args)
+        if obj_args == no_args or obj_args and loop_obj: 
+            console.debug (obj_args)
+            console.debug (loop_obj)
+            self.process(args.action[0],mode,loop_obj,args.object,**obj_args)
         return
 
     # Epilog   
     # Function to process objects
-    def process(self,action,mode,loopobj,obj_type,**obj_args):
-        console.debug(mode)
-        console.debug(action)
-        console.debug(obj_type)
-        console.debug(obj_args)
+    def process(self,action,mode,loop_obj,obj_type,**obj_args):
         if self.debug: 
+            console.debug(mode)
+            console.debug(action)
+            console.debug(obj_type)
+            console.debug(obj_args)
             if obj_type == 'image':
                 self.tempest.list(obj_type,'server')
             else:
                 self.tempest.list(obj_type)
-        for id in loopobj:
-            console.debug( "ACTION: %s" %action + ": %s" %id )
-            if action == 'add':
+        if action == 'add':
+            for id in loop_obj:
+                console.debug( "ACTION: %s" %action + ": %s" %id )
                 obj_args['id'] = id;
                 self.tempest.create(obj_type,mode,**obj_args)
-            elif action == 'delete':
-                print 
-                #self.tempest.delete(mode,obj_type,item,**obj_args)
-            elif action == 'clone': 
-                print 
-            #tempest.clone(mode,obj_type,item,**obj_args)
-            else:
-                console.error ('ACTION: %s: unimplemented or not valid.' %action)  
+            return
+        elif action == 'delete':
+            self.tempest.delete(obj_type,mode,**obj_args)
+            return
+        elif action == 'clone': 
+            self.tempest.clone(obj_type,mode,loop_obj,**obj_args)
+            return
+        else:
+            console.error ('ACTION: %s: unimplemented or not valid.' %action)  
         return
 # --- End Prospero ---
 
@@ -1118,7 +1156,7 @@ def main():
     return
 
 if __name__ == "__main__":
-    
+
     try:
         main()
     except KeyboardInterrupt:
