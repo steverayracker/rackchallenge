@@ -37,6 +37,29 @@ import traceback
 
 # Globals
 global logfile
+# Defaults
+default_base = os.path.expanduser("~/.tempest")
+default_pyrax = os.path.expanduser("~/.pyrax.cfg")
+default_networks = {'public': True, 'private': True}
+default_config = 'tempest_defaults.cfg'
+default_html = "<html>Default %s index.html</html>" %__file__
+logfile = os.path.join(default_base,'logs','tempest.log')
+prefab_lilst = os.path.join(default_base,'prefabs','prefab.lst')
+default_sections = ["tempest","server","dns","files","db","lb",'net','cbs']
+
+tempest_objects=['config','auth','prefab']
+cloud_objects=['server','image','flavor','dns','cloudfiles','cdn','clouddb','db','dbauth','cloudlb','lbnode','ssl','cbs','snap','net']
+common_actions=['list', 'show','add', 'delete', 'rename', 'edit', 'clone','on','off']
+prefab_actions=['run']
+server_actions=['resize', 'revert', 'confirm','reboot']
+db_actions=['resize']
+files_actions=['upload','download','sync']
+dns_actions=['import','export']
+bs_actions=['attach','detach']
+
+all_objects = tempest_objects + cloud_objects
+#all_actions = common_actions + prefab_actions + server_actions + dns_actions + files_actions + db_actions + lb_actions + bs_actions
+all_actions = common_actions + prefab_actions + server_actions  + files_actions + dns_actions + bs_actions
 
 # Global Logging
 log.basicConfig(level=log.DEBUG,
@@ -99,33 +122,6 @@ def autoname(self,obj_type,number,autoname):
         else:
             console.error("unkown autoname type %s", autotype)
     return self.names
-
-
-# Defaults
-default_base = os.path.expanduser("~/.tempest")
-default_pyrax = os.path.expanduser("~/.pyrax.cfg")
-default_networks = {'public': True, 'private': True}
-default_config = 'tempest_defaults.cfg'
-default_html = "<html>Default %s index.html</html>" %__file__
-logfile = os.path.join(default_base,'logs','tempest.log')
-prefab_lilst = os.path.join(default_base,'prefabs','prefab.lst')
-default_sections = ["tempest","server","dns","files","db","lb",'net','cbs']
-
-tempest_objects=['config','auth','prefab']
-cloud_objects=['server','image','flavor','dns','cloudfiles','cdn','clouddb','db','dbauth','cloudlb','lbnode','ssl','cbs','snap','net']
-common_actions=['list', 'show','add', 'delete', 'rename', 'edit', 'clone','on','off']
-prefab_actions=['run']
-server_actions=['resize', 'revert', 'confirm','reboot']
-db_actions=['resize']
-#db_actions=[]
-files_actions=['upload','download','sync']
-dns_actions=['import','export']
-#lb_actions=[]
-bs_actions=['attach','detach']
-
-all_objects = tempest_objects + cloud_objects
-#all_actions = common_actions + prefab_actions + server_actions + dns_actions + files_actions + db_actions + lb_actions + bs_actions
-all_actions = common_actions + prefab_actions + server_actions  + files_actions + dns_actions + bs_actions
 
 warnings.filterwarnings(
     'ignore',
@@ -406,31 +402,64 @@ class Ariel:
    def create(self,obj_type,mode=False,**kwargs):
        console.debug(mode)
        console.debug('Object: %s' %obj_type)
-       console.debug('Add: %s' %args )
-       if obj_type == "server" and args:
+       console.debug('Add: %s' %kwargs )
+       if obj_type == "server" and kwargs:
           self._srv_create(mode,**kwargs)
 
-   def _srv_create(self,mode,id,image,flavor,net=False):
+   def _srv_create(self,mode,id,image,flavor,networks=False,public=True,private=True,cidrlist=False):
        console.debug(mode)
        console.debug('Name: %s' %id )
        console.debug('Flavor: %s' %flavor )
        console.debug('Image: %s' %image )
+       public_string=""
+       private_string=""
        if mode == 'dry_run':
            server = False
        else:
            try:
                img = self._img_valid(image)
                flv= self._flv_valid(flavor)
-               if id and net and flv and img:
-                   server = self.cslist.servers.create(str(id),img,flv,net)
-               elif id and flv and img:
-                   if not net == default_networks:
-                       networks = net['networks']
-                       add_nets = {}
+               add_nets = {}
+               add_cidrs = []
+               # networks only implies existing networks
+               if networks:
+                   if not cidrlist:
+                       console.info("list of network names provided but no CIDRs assuming the networks matching names already exist.")
                    for network in networks:
-                       if self._valid_net(network):
-                           add_nets["u'%s'" %network] = network
-                           server = self.cslist.servers.create(str(id),img,flv,add_nets)
+                       test = self._net_valid(network)
+                       if test:
+                           add_nets["u'%s'" %network] = test
+                   if add_nets == {}:
+                       console.warning("No vaild networks in list: %s" %networks)
+                   nets = self.nets.get_server_networks('public=%s' %public ,'private=%s' %private,add_nets)
+                   console.debug("Nets: %s" %nets)
+               # CIDRs only implies existing networks
+               if cidrlist:
+                   if not networks:
+                       console.info("list of CIDRs provided but no list of network names assuming the networks matching CIDRs already exist.")
+                   for cidr in cidrlist:
+                       test = self._net_valid(cidr)
+                       if test:
+                           add_cidr.append(cidr)
+                   if add_cidrs == []:
+               # Both CIDRs and networks implies creation of new networks
+               if networks and cidrlist:
+                   console.info("list of network names and list of CIDRs provided attempting to create new networks from the lists.")
+                   if add_cidrs != []:
+                       console.critical( 'CIDR(s): %s already exist unable to create new networki with the CIDR(s).' %cidrlist)
+                       exit()
+                   if add_nets != {}:
+                       console.critical( "network(s): %s already exist unable to create new network(s)." %networks)
+                       exit()
+                   self.nets._net_create(mode,networks,cidrlist)
+                   nets = self.nets.get_server_networks('public=%s' %public ,'private=%s' %private,add_nets)
+               if id and flv and img:
+                   if not public or not private and nets:
+                       server = self.cslist.servers.create(str(id),img,flv,networks=nets)
+                   else:
+                       server = self.cslist.servers.create(str(id),img,flv)
+               elif id and flv and img:
+                   server = self.cslist.servers.create(str(id),img,flv)
                else:
                    server = self.cslist.servers.create(str(id),img,flv)
                if server:
@@ -441,6 +470,15 @@ class Ariel:
            except novaclient.exceptions.BadRequest as err:
                console.error(str(err))
                pass
+   def _net_create(self,mode,id,networks,cidrlist):
+       add_nets = {}
+       add_cidrs = []
+       if len(networks) != len(cidrlist):
+           console.critcal("the list of network names does not match the list of cidrs.")
+           exit()
+       for network in networks:
+           test = self._net_valid(network)
+           if not test:
 
    def delete(self,obj_type,mode=False,**kwargs):
        console.debug(mode)
@@ -478,7 +516,6 @@ class Ariel:
        console.info("wating for new server image to become available.")
        if mode != 'dry_run':
            image = self._srv_image(mode,server,imagename) 
-           #pyrax.utils.wait_until(image, "status", ['ACTIVE', 'ERROR'], callback= self._img_clone(mode,namelist,img_ready,flavor, interval=60, attempts=10)i
            lcount = 0
            while True:
                print lcount
@@ -488,7 +525,7 @@ class Ariel:
                       break
                   else:
                       lcount +=1
-                      clone = self._img_clone(mode,namelist,img_ready,flavor)                     
+                      clone = self._img_clone(mode,namelist,img_ready,flavor)
                except Exception:
                   pass
                   time.sleep(60)
@@ -573,6 +610,19 @@ class Ariel:
            console.debug('Valid: %s' %server)
            return server
 
+   def _net_valid(self,id):
+        console.debug("Net: %s" %id)
+        network = "label=%s" %id
+        networks = self.nets.list()
+        console.debug("Avaiable Networks: %s" %networks)
+        try:
+           if network in networks:
+               console.debug('Valid: %s' %network)
+               return network
+        except novaclient.exceptions.NotFound as err:
+            console.error(str(err))
+            pass
+        return
 
    def _img_list(self,img_type=False):
         all_imgs = self.cslist.images.list()
@@ -584,7 +634,6 @@ class Ariel:
             print img.name, " UUID:", img.id
         return
 
-  
    def _net_list(self,net_type=False):
         self.net.list()
 
@@ -679,7 +728,6 @@ class Ariel:
    def _dns_create(self,obj_type):
         value = 'placekeeper'
         return value
-     
 
    def _srv_show(self,id):
 
@@ -754,7 +802,7 @@ class Ariel:
        self.dns = pyrax.cloud_dns
        #pyrax.cloud_dns.set_timeout(30)
        self.cfiles = pyrax.cloudfiles
-       self.net = pyrax.cloud_networks
+       self.nets = pyrax.cloud_networks
        self.db  = pyrax.cloud_databases
        self.lb = pyrax.cloud_loadbalancers
        self.bs = pyrax.cloud_blockstorage
@@ -877,7 +925,7 @@ class Caliban:
          netgroup  = self.parser.add_argument_group('--object network', 'options for --object network')
          netgroup.add_argument('--net', help="add this cloud object to the specified cloud network(s), e.g. --net nopublic mynet == disable the public Internet, the private Rackspace internal net and your Cloud Network nameed mynet. Reserved Keywords:\n nopublic disable the public Internet\n noprivate disable the Rackspace private newtork\nNOTE: the public and private networks are enabled by default." ,metavar = '<cloud network(s)>', nargs='+', action='append' ) 
 
-         bsgroup.add_argument('--cidr', help="cidr of Cloud Network, e.g. 192.168.111.0/24", metavar = '<cidr>')
+         bsgroup.add_argument('--cidr', help="cidr() of Cloud Network, e.g. 192.168.111.0/24", metavar = '<cidr>', action='append')
          actiongroup  = self.parser.add_argument_group('actions', 'options for the --object <object> --action  option')
          actiongroup.add_argument('-A','--action', nargs=1, choices=all_actions, help="action to be taken on cloud object or tempest script object") 
 
@@ -941,6 +989,7 @@ class Prospero:
         # Get uuidlist,namelist and netlist control objects
         self.namelist = []
         self.uuidlist = []
+        self.cidrlist = []
         self.netlist = default_networks
         if args.uuid:
             self.uuidlist = args.uuid[0]
@@ -950,6 +999,7 @@ class Prospero:
 
         if args.net:
             netlist = args.net[0] 
+            netlist = list(set(self.netlist))
             for network in netlist:
                if network == 'nopublic':
                   self.netlist['public'] = False
@@ -961,6 +1011,15 @@ class Prospero:
                 exit()
             else:
                 self.netlist['networks'] = netlist
+
+        if args.cidr:
+            cidrlist = args.cidr[0] 
+            cidrlist = list(set(self.cidrlist))
+            if len(cidrlist) > 10:
+                console.error('accounts have a limit of 10 user defined Cloud Networks, please, try again')
+                exit()
+            else:
+                self.cidrlist['networks'] = cidrlist
 
         if args.autoname and args.number:
             self.namelist = autoname(args.object ,args.number,args.autoname)
@@ -978,7 +1037,9 @@ class Prospero:
             if self.uuidlist:
                 console.debug('UUID(s): %s' %self.uuidlist) 
             if self.netlist:
-                console.debug('Networks(s): %s' %self.netlist) 
+                console.debug('Network(s): %s' %self.netlist) 
+            if self.cidrlist:
+                console.debug('Network cidr(s): %s' %self.cidrlist) 
 
         # Set mode for functions
         mode = False
@@ -1031,7 +1092,7 @@ class Prospero:
                     flavor = args.flavor
 
                 if self.namelist and image and flavor and netlist:
-                    srv_args = { 'image': image, 'flavor': flavor, 'netlist': netlist } 
+                    srv_args = { 'image': image, 'flavor': flavor} 
                     loop_obj = self.namelist
 
                 if self.netlist:
