@@ -48,7 +48,7 @@ prefab_lilst = os.path.join(default_base,'prefabs','prefab.lst')
 default_sections = ["tempest","server","dns","files","db","lb",'net','cbs']
 
 tempest_objects=['config','auth','prefab']
-cloud_objects=['server','image','flavor','dns','cloudfiles','cdn','clouddb','db','dbauth','cloudlb','lbnode','ssl','cbs','snap','net']
+cloud_objects=['server','image','flavor','dnszone','dnsrecord','cloudfiles','cdn','clouddb','db','dbauth','cloudlb','lbnode','ssl','cbstore','snapshot','net']
 common_actions=['list', 'show','add', 'delete', 'rename', 'edit', 'clone','on','off']
 prefab_actions=['run']
 server_actions=['resize', 'revert', 'confirm','reboot']
@@ -275,16 +275,13 @@ class Miranda:
 
 
     def _app(self,section):
-
         if self.defaults:
-
             make_dir(self.base)
             make_dir(self.prefabpath)
             make_dir(self.logpath)
             make_dir(self.uploadpath)
             make_dir(self.tmppath)
             make_dir(self.bakpath)
-
             self.prefab[str(section)]['description'] = 'Application Defaults'
             self.prefab[str(section)]['configpath'] = self.base
             self.prefab[str(section)]['config'] = self.file
@@ -297,32 +294,26 @@ class Miranda:
             self.prefab[str(section)]['default_pyrax'] ='.pyrax.cfg'
             self.prefab[str(section)]['identpath'] =self.base
             self.prefab[str(section)]['default_ident'] ='.tempest.id'
-
-            return
+        return
 
     def _server(self,section):
-
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud Server Defaults'
             self.prefab[str(section)]['image'] = '8a3a9f96-b997-46fd-b7a8-a9e740796ffd'
             self.prefab[str(section)]['flavor'] = 2
             self.prefab[str(section)]['srvprefix'] = 'tempest'
-
-            return
+        return
 
     def _dns(self,section):
-
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud DNS Defaults'
             self.prefab[str(section)]['zone'] = 'tempest.example.com'
             self.prefab[str(section)]['record'] = 'A'
             self.prefab[str(section)]['TTL'] = 300
             self.prefab[str(section)]['email'] = 'webmaster@%s' %self.prefab[str(section)]['zone']
-
-            return
+        return
 
     def _files(self,section):
-
         if self.defaults:
             html = open(os.path.join(self.uploadpath,"index.htm") , 'wb')
             html .write(default_html)
@@ -332,48 +323,39 @@ class Miranda:
             self.prefab[str(section)]['uploadpath'] = self.uploadpath
             self.prefab[str(section)]['upload'] = 'index.htm'
             self.prefab[str(section)]['html'] = default_html
-
-            return
+        return
 
     def _db(self,section):
-
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud Databases Defaults'
             self.prefab[str(section)]['dbtype'] = 'MySQL'
             self.prefab[str(section)]['dbprefix'] = 'tempestdb'
             self.prefab[str(section)]['flavor'] = 2
             self.prefab[str(section)]['volume'] = 2
-
-            return
+        return
 
     def _lb(self,section):
-
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud LoadBalancer Defaults'
             self.prefab[str(section)]['port'] =80
             self.prefab[str(section)]['algorithm'] = 'least connections'
             self.prefab[str(section)]['lbprefix'] = 'tempestlb'
-
-            return
+        return
 
     def _cbs(self,section):
-
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud Block Storage Defaults'
             self.prefab[str(section)]['datastore'] = 'cloudstore'
             self.prefab[str(section)]['type'] = 1
             self.prefab[str(section)]['bsprefix'] = 'tempestcbs'
-
-            return
+        return
 
     def _net(self,section):
-
         if self.defaults:
             self.prefab[str(section)]['description'] = 'Cloud Networks Defaults'
             self.prefab[str(section)]['networks'] = ""
             self.prefab[str(section)]['netprefix'] = 'tempestnet'
-
-            return
+        return
 
 class Ariel:
 
@@ -387,6 +369,17 @@ class Ariel:
        self.auth()
        return
 
+   def _connect(self):
+       self.cslist  = pyrax.cloudservers
+       self.dns = pyrax.cloud_dns
+       #self.dns.set_timeout(30)
+       self.cfiles = pyrax.cloudfiles
+       self.nets = pyrax.cloud_networks
+       self.db  = pyrax.cloud_databases
+       self.lb = pyrax.cloud_loadbalancers
+       self.bs = pyrax.cloud_blockstorage
+       return
+
    def genkeyring ( self, keyname):
        print "Creating keyring: %s" %keyname
        print "User Name: %s" %self.username
@@ -398,6 +391,7 @@ class Ariel:
 
    def uuid_to_name(self,obj_type,objlist):
        console.debug('uuid_to_name')
+       return
 
    def create(self,obj_type,mode=False,**kwargs):
        console.debug(mode)
@@ -405,10 +399,22 @@ class Ariel:
        console.debug('Add: %s' %kwargs )
        if obj_type == "server" and kwargs:
           self._srv_create(mode,**kwargs)
+       if obj_type == "dns" and kwargs:
+          self._dns_create(mode,**kwargs)
+       if obj_type == "net" and kwargs:
+          self._net_create(mode,**kwargs)
+       if obj_type == "cloudfiles" or "cdn" and kwargs:
+          self._files_create(mode,**kwargs)
+       if obj_type == "cloudlb" or "lbnode" and kwargs:
+          self._lb_create(mode,**kwargs)
+       if obj_type == "clouddb" or "db" and kwargs:
+          self._db_create(mode,**kwargs)
+       if obj_type == "cbstore" and kwargs:
+          self._bs_create(mode,**kwargs)
+       return
 
-   def _srv_create(self,mode,id,image,flavor,networks=False,public=True,private=True,cidrlist=False):
-       console.debug(mode)
-       console.debug('Name: %s' %id )
+   def _srv_create(self,mode,namelist,image,flavor,networks=False,public=True,private=True,cidrlist=False):
+       console.debug('Name(s): %s' %namelist )
        console.debug('Flavor: %s' %flavor )
        console.debug('Image: %s' %image )
        public_string=""
@@ -431,8 +437,6 @@ class Ariel:
                            add_nets["u'%s'" %network] = test
                    if add_nets == {}:
                        console.warning("No vaild networks in list: %s" %networks)
-                   nets = self.nets.get_server_networks('public=%s' %public ,'private=%s' %private,add_nets)
-                   console.debug("Nets: %s" %nets)
                # CIDRs only implies existing networks
                if cidrlist:
                    if not networks:
@@ -442,6 +446,7 @@ class Ariel:
                        if test:
                            add_cidr.append(cidr)
                    if add_cidrs == []:
+                       console.warning("No vaild networks in list: %s" %cidrlist)
                # Both CIDRs and networks implies creation of new networks
                if networks and cidrlist:
                    console.info("list of network names and list of CIDRs provided attempting to create new networks from the lists.")
@@ -451,37 +456,57 @@ class Ariel:
                    if add_nets != {}:
                        console.critical( "network(s): %s already exist unable to create new network(s)." %networks)
                        exit()
-                   self.nets._net_create(mode,networks,cidrlist)
+                   _net_create(mode,networks,cidrlist)
                    nets = self.nets.get_server_networks('public=%s' %public ,'private=%s' %private,add_nets)
-               if id and flv and img:
-                   if not public or not private and nets:
-                       server = self.cslist.servers.create(str(id),img,flv,networks=nets)
-                   else:
-                       server = self.cslist.servers.create(str(id),img,flv)
-               elif id and flv and img:
-                   server = self.cslist.servers.create(str(id),img,flv)
-               else:
-                   server = self.cslist.servers.create(str(id),img,flv)
-               if server:
-                   console.info( "ID: %s" %str(server.id) )
-                   console.info( "Status: %s" %server.status )
-                   console.info( "Admin password: %s" %server.adminPass )
-                   console.info( "Networks: %s" %server.networks )
+                   console.debug("Nets: %s" %nets)
+               for name in namelist:
+                   if name and flv and img:
+                       if not public or not private and nets:
+                           server = self.cslist.servers.create(name,img,flv,networks=nets)
+                       else:
+                           server = self.cslist.servers.create(name,img,flv)
+                   if server:
+                       console.info( "ID: %s" %str(server.id) )
+                       console.info( "Status: %s" %server.status )
+                       console.info( "Admin password: %s" %server.adminPass )
+                       console.info( "Networks: %s" %server.networks )
            except novaclient.exceptions.BadRequest as err:
                console.error(str(err))
                pass
-   def _net_create(self,mode,id,networks,cidrlist):
-       add_nets = {}
-       add_cidrs = []
+       return
+
+   def _dns_create(self,obj_type):
+       value = 'placekeeper'
+       return value
+
+   def _lb_create(self,obj_type):
+       value = 'placekeeper'
+       return value
+
+   def _db_create(self,obj_type):
+       value = 'placekeeper'
+       return value
+
+   def _bs_create(self,obj_type):
+       value = 'placekeeper'
+       return value
+
+   def _files_create(self,obj_type):
+       value = 'placekeeper'
+       return value
+
+   def _net_create(self,mode,networks,cidrlist):
+       console.debug("Network(s): %s" %networks)
+       console.debug("CIDR(s): %s" %cidrlist)
        if len(networks) != len(cidrlist):
-           console.critcal("the list of network names does not match the list of cidrs.")
+           console.critcal("the list of network names does not match the list of CIDRs.")
            exit()
        for network in networks:
-           test = self._net_valid(network)
-           if not test:
-
+           cidr = cidrlist.pop(0)
+           self.nets.create("%s" %network, cidr="%s" %cidr)
+       return
+              
    def delete(self,obj_type,mode=False,**kwargs):
-       console.debug(mode)
        console.debug('Delete: %s' %obj_type)
        try:
           if obj_type == "server":
@@ -491,7 +516,7 @@ class Ariel:
        except Exception:
            console.error("Unable to delete: %s" %obj_type)
            pass
-           return
+       return
 
    def clone(self,obj_type,obj,mode=False,**kwargs):
        if obj_type == "server":
@@ -530,6 +555,7 @@ class Ariel:
                   pass
                   time.sleep(60)
        return
+
    def _img_clone(self,mode,namelist,image,flavor):
        img = self._img_valid(image)
        flv = self._flv_valid(flavor)
@@ -537,7 +563,7 @@ class Ariel:
           for name in namelist:
              console.debug(name)
              server = self._srv_create(mode,name,img,flv)
-
+       return
 
    def _srv_delete(self,mode,uuidlist):
        console.debug(mode)
@@ -552,6 +578,7 @@ class Ariel:
            except Exception:
                console.error("unable to delete UUID: %s" %uuid)
                pass
+       return
 
    def _img_delete(self,mode,uuidlist):
        console.debug(mode)
@@ -590,29 +617,32 @@ class Ariel:
                       console.error("unable to delete UUID: %s" %uuid)
            else:
                console.error ("Unable to find the image with UUID '%s' in your list of server images." % delete_me)
+       return
 
-   def valid(self,obj_type,obj):
-
-       try:
-           if obj_type == "server":
-               return self._srv_valid(obj) 
-           if obj_type == "flavor":
-               return self._flv_valid(obj) 
-           if obj_type == "image":
-               return self._img_valid(obj) 
-       except Exception:
-           console.error("Unable to find object with uuid or name: %s" %obj)
-           pass
+   def validate(self,obj_type,obj):
+        try:
+            if obj_type == "server":
+                return self._srv_valid(obj) 
+            if obj_type == "flavor":
+                return self._flv_valid(obj) 
+            if obj_type == "image":
+                return self._img_valid(obj) 
+        except Exception:
+            console.error("Unable to find object with uuid or name: %s" %obj)
+            pass
+        return
 
    def _srv_valid(self,id):
         server = self.cslist.servers.get(str(id))
         if server.name:
            console.debug('Valid: %s' %server)
            return server
+        return
 
    def _net_valid(self,id):
-        console.debug("Net: %s" %id)
+        console.debug("Neti/CIDR: %s" %id)
         network = "label=%s" %id
+        cidr = "label=%s" %id
         networks = self.nets.list()
         console.debug("Avaiable Networks: %s" %networks)
         try:
@@ -635,7 +665,9 @@ class Ariel:
         return
 
    def _net_list(self,net_type=False):
-        self.net.list()
+        nets = self.nets.list()
+        for net in nets:
+            print net.name, " CIDR:", net.cidr
 
    def _flv_list(self):
         flvs = self.cslist.flavors.list()
@@ -655,13 +687,9 @@ class Ariel:
            if image in img.name:
               idmatch = img.id
               matchcount += 1
-              #print "Image Name: %s" %img.name
-              #print "Image ID: %s" %img.id
            elif image in img.id:
               idmatch = img.id
               matchcount += 1
-              #print "Image Name: %s" %img.name
-              #print "Image ID: %s" %img.id
         if matchcount > 1:
            console.error ("more than one image match was found. Please, be more specific in your request, e.g. -i 'CentOS 6.0'")
            exit()
@@ -670,6 +698,7 @@ class Ariel:
            exit()
         else:
            return idmatch
+        return
 
    def _flv_valid(self,flavor):
         console.debug('Flavor: %s' %flavor)
@@ -695,42 +724,36 @@ class Ariel:
             exit()
         else:
             return idmatch
-
+        return
 
    def show(self,obj_type,id):
-
-       if obj_type == "server":
-          try:
-              self._srv_show(id)
-          except Exception:
-              logger.exception("Unable to find object with uuid or name: %s" %id)
-              console.error("Unable to find object with uuid or name: %s" %id)
-              pass
+        if obj_type == "server":
+           try:
+               self._srv_show(id)
+           except Exception:
+               console.error("Unable to find object with uuid or name: %s" %id)
+               pass
+        return
 
    def get(self,obj_type,match,id):
         value = 'placekeeper'
         return value
 
-   def _dns_list(self,obj_type):
-       if obj_type == 'domain':
-          for domain in self.dns.get_domain_iterator():
-              print domain.name
-              for rec in self.dns.get_record_iterator(domain):
-                  print rec
-              for sub in self.dns.get_subdomains_iterator(domain):
-                  print sub.name
-                  recs = sub.list_records()
-                  for rec in self.dns.get_record_iterator(sub):
-                      print rec
+   def _dns_list(self,obj_type=False):
+       for domain in self.dns.get_domain_iterator():
+           print domain.name
+           for rec in self.dns.get_record_iterator(domain):
+               print rec
+           for sub in self.dns.get_subdomains_iterator(domain):
+               print sub.name
+               recs = sub.list_records()
+               for rec in self.dns.get_record_iterator(sub):
+                   print rec
        if obj_type == 'PTR':
            print self.dns.list_ptr_records(device)
-
-   def _dns_create(self,obj_type):
-        value = 'placekeeper'
-        return value
+       return
 
    def _srv_show(self,id):
-
        server = self.cslist.servers.get(id)
        try:
            print
@@ -738,23 +761,24 @@ class Ariel:
            print "Server ID:", server.id
            print "Server Status:", server.status
            print
-
        except Exception:
            logger.exception("Cloud Server object invalid or not found")
            console.error("Cloud Server object invalid or not found") 
-
            pass
-
        return
 
    def list(self,obj_type=False,list_type=False):
-
        if obj_type  == "server":
            self._srv_list()
        if obj_type  == "image":
            self._img_list(list_type)
        if obj_type  == "flavor":
            self._flv_list()
+       if obj_type  == "net":
+           self._net_list()
+       if obj_type  == "dns":
+           self._dns_list()
+       return
 
    def name_to_uuid(self,obj_type,namelist):
        uuidlist=[]
@@ -790,25 +814,14 @@ class Ariel:
                    self.show('server',active)
        else:
            console.warning("there are no active servers in your account.")
-
+       return
 
    def _files_show(self):
        print self.cfiles.get_account_metadata()
        print list_containers_info()
-
-
-   def _connect(self):
-       self.cslist  = pyrax.cloudservers
-       self.dns = pyrax.cloud_dns
-       #pyrax.cloud_dns.set_timeout(30)
-       self.cfiles = pyrax.cloudfiles
-       self.nets = pyrax.cloud_networks
-       self.db  = pyrax.cloud_databases
-       self.lb = pyrax.cloud_loadbalancers
-       self.bs = pyrax.cloud_blockstorage
+       return
 
    def auth(self):
-
        if pyrax.identity.authenticated:
            self._connect()
            return
@@ -854,8 +867,7 @@ class Ariel:
            if pyrax.identity.authenticated and pyrax.cloudservers:
                console.info("authentication sucessful")
                self._connect()
-
-               return
+       return
 
 class Caliban:
 
@@ -895,6 +907,7 @@ class Caliban:
          objectgroup.add_argument("-O",'--object', help="the type of cloud object, e.g. server", type=str, choices=all_objects, metavar='<object type>')
          objectgroup.add_argument('-N','--name', help="the name(s) of the cloud object, e.g. for two server objects --name web1 web2", metavar ="<name(s)>", nargs='+', action='append')
          objectgroup.add_argument('-U','--uuid', help="the UUID(s) of the cloud object", type=str , metavar = "<UUID(s)>" , nargs='+', action='append')
+         objectgroup.add_argument('-T','--type', help="generic type delimiter for listing objects, e.g. --object dns --action list --type PTR", type=str , metavar = "<type>")
          namegroup = self.parser.add_argument_group('names', 'options for the --autoname option used when generating multiple cloud objects of the same type')
          namegroup.add_argument('--autoname', help="automatically generate names when creating multiple objects", nargs=2, metavar='<name prefix> < simple|date >' )
          namegroup.add_argument('-n','--number', help="then number of cloud objects to add", default=1,type=int,  metavar = "<number>")
@@ -916,16 +929,16 @@ class Caliban:
          dbgroup= self.parser.add_argument_group('--object clouddb', 'options for --object cloudb ,i.e a cloud datbase instance')
          dbgroup= self.parser.add_argument_group('--object db', 'options for --object db ,i.e a datbase running on a clouddb')
          dbgroup.add_argument('--volume', help="the cloud database instance storage volume size in GB, e.g. --volume 2", type=int , metavar='<volume size>' )
-         lbgroup  = self.parser.add_argument_group('--object lb/loadbalancer', 'options for  --object lb/loadbalancer')
+         lbgroup  = self.parser.add_argument_group('--object lb', 'options for  --object lb')
          lbgroup.add_argument('--port', help="loadbalancer port to listen on", metavar='<port number>')
          lbgroup.add_argument('--vip', help="virtual IP to assign to the loadbalancer object", metavar = '<virtual ip address>')
-         lbgroup.add_argument('--algorithm', help="the cloud load balancer algorithm", choices = ['random','round _robin','weighted_round_robin','least_conns','weighted_least_conns'])
-         bsgroup  = self.parser.add_argument_group('--object datastore', 'options for --object datastore')
-         bsgroup.add_argument('--type', help="storage type", metavar = '<SATA|SSD>' , choices = ['sata','SATA','ssd','SSD'])
+         lbgroup.add_argument('--algorithm', help="the cloud load balancer algorithm", choices = ['random','round_robin','weighted_round_robin','least_conns','weighted_least_conns'])
+         bsgroup  = self.parser.add_argument_group('--object cbstore', 'options for --object cbstore')
+         bsgroup.add_argument('--drive', help="storage harddrive type", metavar = '<SATA|SSD>' , choices = ['sata','SATA','ssd','SSD'])
          netgroup  = self.parser.add_argument_group('--object network', 'options for --object network')
          netgroup.add_argument('--net', help="add this cloud object to the specified cloud network(s), e.g. --net nopublic mynet == disable the public Internet, the private Rackspace internal net and your Cloud Network nameed mynet. Reserved Keywords:\n nopublic disable the public Internet\n noprivate disable the Rackspace private newtork\nNOTE: the public and private networks are enabled by default." ,metavar = '<cloud network(s)>', nargs='+', action='append' ) 
 
-         bsgroup.add_argument('--cidr', help="cidr() of Cloud Network, e.g. 192.168.111.0/24", metavar = '<cidr>', action='append')
+         netgroup.add_argument('--cidr', help="cidr() of Cloud Network, e.g. 192.168.111.0/24", metavar = '<cidr>', nargs='+',action='append')
          actiongroup  = self.parser.add_argument_group('actions', 'options for the --object <object> --action  option')
          actiongroup.add_argument('-A','--action', nargs=1, choices=all_actions, help="action to be taken on cloud object or tempest script object") 
 
@@ -999,7 +1012,8 @@ class Prospero:
 
         if args.net:
             netlist = args.net[0] 
-            netlist = list(set(self.netlist))
+            if len(netlist) > 1:
+               netlist = list(set(self.netlist))
             for network in netlist:
                if network == 'nopublic':
                   self.netlist['public'] = False
@@ -1013,13 +1027,16 @@ class Prospero:
                 self.netlist['networks'] = netlist
 
         if args.cidr:
+            console.debug("CIDR: %s" %args.cidr)
             cidrlist = args.cidr[0] 
-            cidrlist = list(set(self.cidrlist))
+            if len(cidrlist) > 1:
+                cidrlist = list(set(self.cidrlist))
+            console.debug(cidrlist)
             if len(cidrlist) > 10:
                 console.error('accounts have a limit of 10 user defined Cloud Networks, please, try again')
                 exit()
             else:
-                self.cidrlist['networks'] = cidrlist
+                self.cidrlist = cidrlist
 
         if args.autoname and args.number:
             self.namelist = autoname(args.object ,args.number,args.autoname)
@@ -1039,7 +1056,7 @@ class Prospero:
             if self.netlist:
                 console.debug('Network(s): %s' %self.netlist) 
             if self.cidrlist:
-                console.debug('Network cidr(s): %s' %self.cidrlist) 
+                console.debug('Network CIDR(s): %s' %self.cidrlist) 
 
         # Set mode for functions
         mode = False
@@ -1074,11 +1091,10 @@ class Prospero:
                 exit()
 
         obj_args = False 
-        loop_obj = False 
         no_args = { } 
         # --action add
         if "add" in args.action:
-            # --object server -- action
+            # --object server -- actioni add
             if args.object == "server" and self.namelist:
 
                 # Get default --object server --action add required arg values
@@ -1091,9 +1107,8 @@ class Prospero:
                 if args.flavor:
                     flavor = args.flavor
 
-                if self.namelist and image and flavor and netlist:
-                    srv_args = { 'image': image, 'flavor': flavor} 
-                    loop_obj = self.namelist
+                if self.namelist and image and flavor and self.netlist:
+                    srv_args = { 'namelist': self.namelist, 'image': image, 'flavor': flavor} 
 
                 if self.netlist:
                     #join the netlist to the argument list
@@ -1101,54 +1116,50 @@ class Prospero:
                 else: 
                     obj_args = srv_args
 
+            # --object net  -- action add
+            if args.object == "net" and self.namelist and self.cidrlist:
+                obj_args = {'networks': self.namelist, 'cidrlist': self.cidrlist}
+
         # --action delete
         if "delete" in args.action:
 
             if args.object == "server" or "image" and self.uuidlist:
-                loop_obj = self.uuidlist
-                obj_args ={ 'uuidlist': loop_obj }
+                obj_args ={ 'uuidlist': self.uuidlist }
 
         # --action clone
         if "clone" in args.action:
             if args.object == "server" and self.namelist and len(self.uuidlist) == 1:
-                loop_obj = self.uuidlist
-                console.debug(loop_obj)
-                obj_args = { 'namelist': self.namelist }
+                obj_args = { 'uuidlist': self.uuidlist, 'namelist': self.namelist }
             elif len(self.uuidlist) < 1:
                 console.critical('Cloning requires you to specify one server or image UUID to clone.')
             else:
                 console.critical('Cloning of more than one object UUID, %s , is currently not suported.' %self.uuidlist)
                 return
 
-        if obj_args == no_args or obj_args and loop_obj: 
+        if obj_args == no_args or obj_args: 
             console.debug (obj_args)
-            console.debug (loop_obj)
-            self.process(args.action[0],mode,loop_obj,args.object,**obj_args)
+            self.command(args.action[0],args.object,mode,**obj_args)
         return
 
     # Epilog   
     # Function to process objects
-    def process(self,action,mode,loop_obj,obj_type,**obj_args):
+    def command(self,action,obj_type,mode=False,**obj_args):
         if self.debug: 
             console.debug(mode)
-            console.debug(action)
-            console.debug(obj_type)
+            console.debug( "ACTION: %s" %action + ": %s" %obj_type )
             console.debug(obj_args)
             if obj_type == 'image':
                 self.tempest.list(obj_type,'server')
             else:
                 self.tempest.list(obj_type)
         if action == 'add':
-            for id in loop_obj:
-                console.debug( "ACTION: %s" %action + ": %s" %id )
-                obj_args['id'] = id;
-                self.tempest.create(obj_type,mode,**obj_args)
+            self.tempest.create(obj_type,mode,**obj_args)
             return
         elif action == 'delete':
             self.tempest.delete(obj_type,mode,**obj_args)
             return
         elif action == 'clone': 
-            self.tempest.clone(obj_type,mode,loop_obj,**obj_args)
+            self.tempest.clone(obj_type,mode,**obj_args)
             return
         else:
             console.error ('ACTION: %s: unimplemented or not valid.' %action)  
