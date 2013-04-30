@@ -48,18 +48,19 @@ prefab_lilst = os.path.join(default_base,'prefabs','prefab.lst')
 default_sections = ["tempest","server","dns","files","db","lb",'net','cbs']
 
 tempest_objects=['config','auth','prefab']
-cloud_objects=['server','image','flavor','dnszone','dnsrecord','cloudfiles','cdn','clouddb','db','dbauth','cloudlb','lbnode','ssl','cbstore','snapshot','net']
+cloud_objects=['server','image','flavor','dnszone','subdomain','dnsrecord','cloudfiles','cdn','file','tmpurl','clouddb','db','dbuser','cloudlb','lbnode','lbssl','lbmonitor','lbacl','lberror','lbcache','cbstore','snapshot','net']
 common_actions=['list', 'show','add', 'delete', 'rename', 'edit', 'clone','on','off']
 prefab_actions=['run']
 server_actions=['resize', 'revert', 'confirm','reboot']
 db_actions=['resize']
-files_actions=['upload','download','sync']
+lb_actions=['enable','disable','draining']
+files_actions=['upload','download','sync','copy','move']
 dns_actions=['import','export']
 bs_actions=['attach','detach']
 
 all_objects = tempest_objects + cloud_objects
 #all_actions = common_actions + prefab_actions + server_actions + dns_actions + files_actions + db_actions + lb_actions + bs_actions
-all_actions = common_actions + prefab_actions + server_actions  + files_actions + dns_actions + bs_actions
+all_actions = common_actions + prefab_actions + server_actions  + files_actions + dns_actions + lb_actions + bs_actions
 
 # Global Logging
 log.basicConfig(level=log.DEBUG,
@@ -895,7 +896,7 @@ class Caliban:
          controlgroup.add_argument('--debug', help="show debug output on the console",action="store_false")
          controlgroup.add_argument('--setup', help="setup initial script environment", choices = ['defaults','custom'], metavar='<setup type>')
          controlgroup.add_argument('--interactive', help="help",action="store_true")
-         controlgroup.add_argument('--version', action='version', version = "0.02")
+         controlgroup.add_argument('--version', action='version', version = "0.03")
          controlgroup.add_argument('-q','--quiet', help="suppress verbose output",action="store_true" )
          controlgroup.add_argument('--config',  help="use this alternate configuration file",  metavar="<configuration file path>")
          authgroup = self.parser.add_argument_group('authentication','options that are used for authentication')
@@ -908,6 +909,7 @@ class Caliban:
          objectgroup.add_argument('-N','--name', help="the name(s) of the cloud object, e.g. for two server objects --name web1 web2", metavar ="<name(s)>", nargs='+', action='append')
          objectgroup.add_argument('-U','--uuid', help="the UUID(s) of the cloud object", type=str , metavar = "<UUID(s)>" , nargs='+', action='append')
          objectgroup.add_argument('-T','--type', help="generic type delimiter for listing objects, e.g. --object dns --action list --type PTR", type=str , metavar = "<type>")
+         objectgroup.add_argument('-M','--metadata', help="additional metadata of the cloud object", metavar ="<metadata key> <metadata value>", nargs=2, action='append')
          namegroup = self.parser.add_argument_group('names', 'options for the --autoname option used when generating multiple cloud objects of the same type')
          namegroup.add_argument('--autoname', help="automatically generate names when creating multiple objects", nargs=2, metavar='<name prefix> < simple|date >' )
          namegroup.add_argument('-n','--number', help="then number of cloud objects to add", default=1,type=int,  metavar = "<number>")
@@ -916,27 +918,37 @@ class Caliban:
          prefabgroup.add_argument("--prefabs", help="the prefab file(s) to be used for --object prefab", metavar='<prefab file(s)>', nargs='+', action='append')
          servergroup = self.parser.add_argument_group('--object server', 'options for --object server')
          servergroup.add_argument('-i','--image', help="cloud server image uuid or name", metavar = '<name/uuid>')
-         servergroup.add_argument('-f','--flavor', help="cloud server flavor id or RAM size, e.g. -f 512" ,metavar = '<flavor id|RAM size>') 
-         dnsgroup  = self.parser.add_argument_group('--object dns', 'options for --object dns')
-         dnsgroup.add_argument('-z','--zone', help="DNS zone / fully qualified domain name or subdomain name, TTL and the email of the domain manager", metavar = '<the fqdn for the (sub)domain zone> <TTL> <email>', nargs=3, action='append' )
-         dnsgroup.add_argument('-r','--record', help="the DNS record type to add and the resource it is mapped to, e.g --record A 300 192.168.1.1 or --record CNAME 300 mail.example.com",  metavar = '<A|AAA|CNAME|TXT|MX> <TTL> [priority for M|] <ip|hostname>', nargs='?', action='append')
+         servergroup.add_argument('-f','--flavor', help="cloud server flavor id or RAM size, e.g. -f 512" ,metavar = '<flavor id|RAM size>', choices=['2','512','3','1024','4','2048','5','4096','6','8192']) 
+         dnsgroup  = self.parser.add_argument_group('--object dnszone', 'options for --object dnszone')
+         dnsgroup  = self.parser.add_argument_group('--object subdomain', 'options for --object subdomain')
+         dnsgroup.add_argument('--email', help="the email of the domain manager", metavar = '<email>' )
+         dnsgroup  = self.parser.add_argument_group('--object dnsrecord', 'options for --object dnsrecord')
+         dnsgroup.add_argument('--ttl', help="DNS zone/record TTL", type=int, metavar = '<TTL in seconds>' )
+         dnsgroup.add_argument('--record', help="the DNS record type to add and the resoure it is mapped to, e.g --record A 300 192.168.1.1 or --record CNAME 300 mail.example.com",  metavar = '<A|AAA|CNAME|TXT|MX> <TTL> [priority for M|] <ip|hostname>', nargs='?', action='append')
          dnsgroup.add_argument('--PTR', help="add a PTR record, e.g --object dns --action add --PTR 192.168.111.111 example.com",  nargs=2, metavar = '<IP address> <hostname>')
          dnsgroup.add_argument('--bind', help="a DNS zone BIND file to import",  metavar = '<BIND file>')
+         dnsgroup.add_argument('--comment', help="a comment field for a DNS object",  metavar = '<comment (160 character max>')
          filesgroup  = self.parser.add_argument_group('--object cloudfiles', 'options for  --object cloudfiles')
          filesgroup  = self.parser.add_argument_group('--object cdn', 'options for  --object cdn')
          filesgroup  = self.parser.add_argument_group('--object file', 'options for  --object file')
          filesgroup  = self.parser.add_argument_group('--object directory', 'options for  --object directory')
          dbgroup= self.parser.add_argument_group('--object clouddb', 'options for --object cloudb ,i.e a cloud datbase instance')
-         dbgroup= self.parser.add_argument_group('--object db', 'options for --object db ,i.e a datbase running on a clouddb')
          dbgroup.add_argument('--volume', help="the cloud database instance storage volume size in GB, e.g. --volume 2", type=int , metavar='<volume size>' )
+         dbgroup.add_argument('--instance', help="the cloud database instance size , e.g. --instance 512" , metavar='<db instance id or RAM size>', choices=['1','512','2','1024','3','2048','4','4096'] )
+         dbgroup= self.parser.add_argument_group('--object db', 'options for --object db ,i.e a datbase running on a cloud database instance')
+         dbgroup= self.parser.add_argument_group('--object dbuser', 'options for --object dbuser')
          lbgroup  = self.parser.add_argument_group('--object lb', 'options for  --object lb')
-         lbgroup.add_argument('--port', help="loadbalancer port to listen on", metavar='<port number>')
-         lbgroup.add_argument('--vip', help="virtual IP to assign to the loadbalancer object", metavar = '<virtual ip address>')
+         lbgroup.add_argument('--vip', help="virtual IP to assign to the loadbalancer object", metavar = '<PUBLIC/SERVICENET>', choices=['PUBLIC','public','SERVICENET','private'])
          lbgroup.add_argument('--algorithm', help="the cloud load balancer algorithm", choices = ['random','round_robin','weighted_round_robin','least_conns','weighted_least_conns'])
+         lbgroup.add_argument('--persistence', help="the cloud load balancer session persistence settings", choices = ['HTTP_COOKIE','cookie','SOURCE_IP','ip'])
+         lbgroup.add_argument('--protocol', help="the cloud load balancer protocol", choices = ['DNS_TCP', 'DNS_UDP', 'FTP', 'HTTP', 'HTTPS', 'IMAPS', 'IMAPv2', 'IMAPv3', 'IMAPv4', 'LDAP', 'LDAPS', 'MYSQL', 'POP3', 'POP3S', 'SFTP', 'SMTP', 'TCP', 'TCP_CLIENT_FIRST', 'UDP', 'UDP_STREAM'])
+         lbgroup  = self.parser.add_argument_group('--object lbnode', 'options for  --object lbnode')
+         lbgroup  = self.parser.add_argument_group('--object lbssl', 'options for  --object lbssl')
+         lbgroup  = self.parser.add_argument_group('--object lbacl', 'options for  --object lbacl')
          bsgroup  = self.parser.add_argument_group('--object cbstore', 'options for --object cbstore')
          bsgroup.add_argument('--drive', help="storage harddrive type", metavar = '<SATA|SSD>' , choices = ['sata','SATA','ssd','SSD'])
          netgroup  = self.parser.add_argument_group('--object network', 'options for --object network')
-         netgroup.add_argument('--net', help="add this cloud object to the specified cloud network(s), e.g. --net nopublic mynet == disable the public Internet, the private Rackspace internal net and your Cloud Network nameed mynet. Reserved Keywords:\n nopublic disable the public Internet\n noprivate disable the Rackspace private newtork\nNOTE: the public and private networks are enabled by default." ,metavar = '<cloud network(s)>', nargs='+', action='append' ) 
+         netgroup.add_argument('--net', help="add this cloud object to the specified cloud network(s), e.g. --net nopublic mynet == disable the public Internet, the private Rackspace internal net and your Cloud Network named mynet. Reserved Keywords:\n nopublic disable the public Internet\n noprivate disable the Rackspace private newtork\nNOTE: the public and private networks are enabled by default." ,metavar = '<cloud network(s)>', nargs='+', action='append' ) 
 
          netgroup.add_argument('--cidr', help="cidr() of Cloud Network, e.g. 192.168.111.0/24", metavar = '<cidr>', nargs='+',action='append')
          actiongroup  = self.parser.add_argument_group('actions', 'options for the --object <object> --action  option')
