@@ -505,7 +505,7 @@ class Ariel:
            cidr = cidrlist.pop(0)
            self.nets.create("%s" %network, cidr="%s" %cidr)
        return
-              
+
    def delete(self,obj_type,mode=False,**kwargs):
        console.debug('Delete: %s' %obj_type)
        try:
@@ -518,42 +518,40 @@ class Ariel:
            pass
        return
 
-   def clone(self,obj_type,obj,mode=False,**kwargs):
+   def clone(self,obj_type,mode=False,**kwargs):
        if obj_type == "server":
-           self._srv_clone(obj,mode,**kwargs)
+           self._srv_clone(mode,**kwargs)
        if obj_type == "image":
-           self._img_clone(obj,mode,**kwargs)
+           self._img_clone(mode,**kwargs)
 
-   def _srv_image(self,mode,server,name):
-       console.debug('Image: %s' %server)
-       image = server.create_image(name)
-       return image
+   def _srv_image(self,mode,image,name):
+       console.debug('Image: %s' %image)
+       clone = image.create_image(name)
+       return clone
 
-   def _srv_clone(self,mode,obj,namelist):
+   def _srv_clone(self,mode,namelist,uuidlist):
        console.debug(mode)
-       console.debug(obj[0])
+       console.debug(uuidlist)
        console.debug('Name list: %s' %namelist)
-       server = self._srv_valid(obj[0])
+       server = self._srv_valid(uuidlist[0])
        now  = datetime.datetime.now()
        flavor = server.flavor.get('id')
-       imagename = server.name + '.' + now.strftime('%Y%m%d%H%M')
-       console.debug('Imaging: %s' %obj + 'as %s' %imagename )
-       console.info("wating for new server image to become available.")
+       name = server.name + '.' + now.strftime('%Y%m%d%H%M')
+       console.debug('Imaging: %s' %uuidlist[0] + 'as %s' %name )
+       console.info("Please, wait for the new server image to become available.")
+       image = self._srv_image(mode,server,name) 
+       img_ready = self.cslist.images.get(image)
        if mode != 'dry_run':
-           image = self._srv_image(mode,server,imagename) 
-           lcount = 0
+           loopcount = 0
            while True:
-               print lcount
-               try:
-                  if clone or lcount == 1:
-                      print 'BREAK'
-                      break
-                  else:
-                      lcount +=1
-                      clone = self._img_clone(mode,namelist,img_ready,flavor)
-               except Exception:
-                  pass
-                  time.sleep(60)
+               time.sleep(60)
+               if loopcount > 0:
+                   sys.stdout.write("\rElapsed: %s" %(loopcount * 60) )
+               if img_ready.status == 'ACTIVE':
+                   server = self._srv_create(mode,namelist,img_ready,flavor)
+                   break
+               else:
+                   loopcount +=1
        return
 
    def _img_clone(self,mode,namelist,image,flavor):
@@ -660,23 +658,43 @@ class Ariel:
             imgs = all_imgs
         else:
             imgs = [img for img in all_imgs if hasattr(img, img_type)]
+        print
         for img in imgs:
             print img.name, " UUID:", img.id
+            print
+        return
+
+   def _lb_list(self,lb_type=False):
+        lbs = self.lb.list()
+        print
+        for lb in lbs:
+            print "Load Balancer:", lb.name
+            print "ID:", lb.id
+            print "Status:", lb.status
+            print "Nodes:", lb.nodes
+            print "Virtual IPs:", lb.virtual_ips
+            print "Algorithm:", lb.algorithm
+            print "Protocol:", lb.protocol
+            print
         return
 
    def _net_list(self,net_type=False):
         nets = self.nets.list()
+        print
         for net in nets:
             print net.name, " CIDR:", net.cidr
+            print
 
    def _flv_list(self):
         flvs = self.cslist.flavors.list()
         for flv in flvs:
+            print
             print "Name:", flv.name
             print "  ID:", flv.id
             print "  RAM:", flv.ram
             print "  Disk:", flv.disk
             print "  VCPUs:", flv.vcpus
+            print
         return
 
    def _img_valid(self,image):
@@ -778,6 +796,8 @@ class Ariel:
            self._net_list()
        if obj_type  == "dns":
            self._dns_list()
+       if obj_type  == "cloudlb":
+           self._lb_list()
        return
 
    def name_to_uuid(self,obj_type,namelist):
